@@ -13,9 +13,9 @@ PLAYWRIGHT_BROWSERS_PATH="$PWD/.browsers" uv run playwright install chromium
 ## 先运行纯 Playwright
 
 ```sh
-uv run python browser_tool.py --offline
-uv run python browser_tool.py
-uv run python browser_tool.py --headed
+uv run python examples/browser_tool.py --offline
+uv run python examples/browser_tool.py
+uv run python examples/browser_tool.py --headed
 ```
 
 `--offline` 用内存中的本地 HTML，验证浏览器、定位、输入、断言和清理。
@@ -39,8 +39,8 @@ OPENAI_BASE_URL=你的GLM兼容接口地址
 不要把 key 发到聊天中；`.env` 已加入 `.gitignore`。
 
 ```sh
-uv run python day1_agent.py --offline
-uv run python day1_agent.py
+uv run python examples/day1_agent.py --offline
+uv run python examples/day1_agent.py
 ```
 
 Agent 调用需要对应模型提供商的 API 账户和额度；`--offline` 仅指浏览器页面离线，模型仍需联网。
@@ -51,8 +51,8 @@ SDK 的模型/工具循环和测试套件的步骤/用例循环是两种不同�
 
 ## 按这个顺序阅读
 
-1. `browser_tool.py`：先读 `check_search_box()`，看建立会话、断言和 `finally`。
-2. `day1_agent.py`：看 `@function_tool`，它把普通函数暴露为模型可以调用的工具。
+1. `examples/browser_tool.py`：先读 `check_search_box()`，看建立会话、断言和 `finally`。
+2. `examples/day1_agent.py`：看 `@function_tool`，它把普通函数暴露为模型可以调用的工具。
 3. 看 `Agent(tools=...)` 与 `Runner.run(...)` 如何连接模型和工具。
 
 | 对象 | 作用 |
@@ -78,7 +78,7 @@ Day 1 的工具使用预先定义的 locator，Agent 只负责调用工具。
 
 ```sh
 uv sync --locked
-uv run python translate_case.py /Users/xuenilaw/Downloads/WBS_testcase1_osm.xlsx --amendments case_amendments.json
+uv run python -m test_agent translate cases/osm/WBS_testcase1_osm.xlsx
 uv run python -m unittest discover -s tests -v
 ```
 
@@ -91,17 +91,18 @@ Excel 每条用例一行，Actions 和 Expected 的单元格内使用从 1 开�
 此入口没有浏览器工具，不导入 Playwright，也不调用执行器。
 GLM 返回普通 JSON，再在本地验证；不假设第三方支持 OpenAI 严格结构化输出接口。
 
-`case_amendments.json` 记录聊天中已确认的三项修订：步骤 4 请求路线、步骤 2 验证两个输入框、
-步骤 5 验证行程时间严格小于 180 分钟。只有原文完全匹配才应用，避免覆盖后来改过的 Excel。
-如果 Excel 已手动改好，省略 `--amendments`，并在步骤编号变化时更新约束文件。
+项目内的样例 Excel 已包含请求路线、输入框可见性和严格小于 180 分钟的要求。
+直接以 Excel 为输入，不再使用 amendments 文件或 `--amendments` 参数。
+Downloads 中的旧副本尚未更新，请使用 `cases/osm/` 内的文件。
+修改关键要求或步骤编号时，也要同步调整约束文件，并重新翻译计划。
 
-`translation_contracts.json` 是 OSM-001 的明确验收约束，用于检查城市、提交顺序、
+`cases/osm/contracts.json` 是 OSM-001 的明确验收约束，用于检查城市、提交顺序、
 输入框可见性和严格时间阈值。它不是从模型输出生成的，避免模型自证正确。
 新用例的约束需要单独定义；没有约束的用例只有 schema 和来源覆盖检查。
 
-每次输出在 `artifacts/translation-<run_id>/`：
+每次输出在 `artifacts/translation-<run_id>/cases/<case_id>/`（旧运行记录保留在原位置）：
 
-- `source.json`：原文、有效文本、修订和验收约束。
+- `source.json`：直接读取的 `case`、来源位置、验收约束和应用 URL。
 - `model-output.txt`：原始模型响应。
 - `candidate-plan.json`：通过 schema 的候选计划，即使后续规则拒绝也保留。
 - `validation.json`：VALIDATED 或 REJECTED、错误、非阻断 notes。
@@ -109,8 +110,8 @@ GLM 返回普通 JSON，再在本地验证；不假设第三方支持 OpenAI 严
 
 VALIDATED 不是测试 PASS，也不是完整语义正确的证明；尚未检查网页 locator 或路线。
 前置条件只保留文本，还没有执行检查。cleanup 已翻译但不执行，关闭 context 属于后续 Runner。
-任何缺步骤、源文字被改写、非法动作或未解决的 issues 都会拒绝计划。原始无修订版本的
-ETA/within 3 hours 语义未确认时应保留歧义，不能默默升级成通过验证的计划。
+任何缺步骤、源文字被改写、非法动作或未解决的 issues 都会拒绝计划。
+未来可增加用例审查 agent，在翻译/执行前发现歧义；当前没有实现该功能。
 
 ### Validator 与 guardrail agent
 
@@ -118,4 +119,29 @@ guardrail 是验证与阻断的机制，不一定是 agent。本阶段是确定�
 动作白名单、参数类型、来源覆盖、明确的用例约束。暂未使用 SDK guardrail decorator。
 以后可增加语义审查 agent，检测自然语言中漏掉的含义；它补充规则，不替代规则。
 
-阅读顺序：`excel_reader.py` → `translation_schema.py` → `translator.py` → `translate_case.py`。
+阅读顺序：`readers/excel.py` → `schemas/plan.py` → `translation/validator.py` →
+`translation/translator.py` → `cli.py`，这些文件都在 `src/test_agent/` 内。
+
+## 项目结构
+
+```text
+src/test_agent/
+  __main__.py, cli.py        # python -m test_agent 的入口
+  readers/excel.py           # workflow 1：读取用例
+  schemas/plan.py            # 纯 Pydantic 数据模型
+  translation/translator.py  # workflow 1b：自然语言翻译
+  translation/validator.py   # 通用验证和路线约束验证，分开维护
+cases/osm/                  # 样例 Excel、contracts.json
+examples/                   # 保留 Day 1 Playwright 和 Agent 教学脚本
+tests/fixtures/             # 不需要网络或真实模型的回归测试
+docs/reviews/               # Codex handoff 与 Claude review
+artifacts/<run_id>/cases/<case_id>/  # 每条用例独立证据
+```
+
+从项目根目录运行 `uv sync --locked`，它安装 editable package。
+目录名 `test_agent` 用于 Python import，发行包名 `test-agent` 与 GitHub repo 一致。
+CLI 默认从当前目录读取 `.env`、`cases/osm/contracts.json` 并写入 `artifacts/`。
+从其他目录调用时，可用 `python -m test_agent --project-dir /path/to/test-agent translate ...`；
+显式提供的 workbook/contracts 相对路径仍相对于当前工作目录。
+`--output-dir` 可覆盖 artifacts 的根目录。执行器、套件 summary 和 HTML 报告后续实现，
+当前不创建空的预留代码目录或假的报告文件。

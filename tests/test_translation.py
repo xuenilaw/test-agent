@@ -7,8 +7,9 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from excel_reader import apply_amendments, numbered_items
-from translation_schema import TranslationPlan, validate_plan
+from test_agent.readers.excel import numbered_items, read_case
+from test_agent.schemas.plan import TranslationPlan
+from test_agent.translation.validator import validate_plan
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -18,7 +19,7 @@ class TranslationValidationTests(unittest.TestCase):
         fixture = json.loads((ROOT / "tests/fixtures/osm_translation.json").read_text())
         self.case = fixture["case"]
         self.candidate = copy.deepcopy(fixture["plan"])
-        self.contract = json.loads((ROOT / "translation_contracts.json").read_text())["OSM-001"]
+        self.contract = json.loads((ROOT / "cases/osm/contracts.json").read_text())["OSM-001"]
 
     def errors(self):
         return validate_plan(TranslationPlan.model_validate(self.candidate), self.case,
@@ -92,11 +93,10 @@ class TranslationValidationTests(unittest.TestCase):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 numbered_items(text)
 
-    def test_amendments_never_overwrite_changed_text(self):
-        case = copy.deepcopy(self.case)
-        case["actions"][3]["text"] = "Enter Bremen instead"
-        with self.assertRaises(ValueError):
-            apply_amendments(case, ROOT / "case_amendments.json")
+    def test_workbook_requirements_match_reviewed_reference(self):
+        case = read_case(ROOT / "cases/osm/WBS_testcase1_osm.xlsx", "OSM-001")
+        case.pop("source")
+        self.assertEqual(case, self.case)
 
 
 if __name__ == "__main__":

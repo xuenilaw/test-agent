@@ -9,7 +9,7 @@ from pathlib import Path
 
 from playwright.async_api import async_playwright, expect
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 # Use the project-local browser installation when present.
 if (ROOT / ".browsers").exists():
     os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(ROOT / ".browsers"))

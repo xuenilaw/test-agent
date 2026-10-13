@@ -1,7 +1,5 @@
 """Read one-row-per-case workbooks without editing them."""
 
-import copy
-import json
 import re
 from pathlib import Path
 
@@ -62,23 +60,3 @@ def read_case(path: Path, case_id: str) -> dict:
     if len(case["actions"]) != len(case["expected"]):
         raise ValueError("This milestone requires one numbered Expected entry per source step.")
     return case
-
-
-def apply_amendments(case: dict, path: Path | None) -> tuple[dict, list[dict]]:
-    effective = copy.deepcopy(case)
-    applied = []
-    if path is None:
-        return effective, applied
-    amendment = json.loads(path.read_text(encoding="utf-8")).get(case["case_id"], {})
-    for column, key in (("Actions", "actions"), ("Expected", "expected")):
-        for number, change in amendment.get(column, {}).items():
-            index = int(number) - 1
-            if index < 0 or index >= len(effective[key]):
-                raise ValueError(f"Amendment refers to missing {column} {number}.")
-            original = effective[key][index]["text"]
-            if original != change["original"]:
-                raise ValueError(f"{column} {number} has changed. Update or omit the amendments file.")
-            effective[key][index]["text"] = change["replacement"]
-            applied.append({"column": column, "number": int(number), "original": original,
-                            "replacement": change["replacement"], "reason": amendment.get("reason", "")})
-    return effective, applied

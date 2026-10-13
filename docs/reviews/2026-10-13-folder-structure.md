@@ -1,8 +1,92 @@
 # Folder structure for the full workflow
-Status: CHANGES REQUESTED
+Status: IN REVIEW
 Workflow step(s): all (structure). Current progress: steps 1 and 1b.
 
 ## Handoff (Codex)
+### Restructuring handoff (2026-10-13)
+Follow-up: the user subsequently updated the project workbook. Amendment support was removed
+in `2026-10-13-remove-amendments.md`; use `python -m test_agent translate cases/osm/WBS_testcase1_osm.xlsx`
+without `--amendments`. The restructuring snapshot and its test output below describe the earlier phase.
+
+#### Goal
+Reorganize workflow steps 1 and 1b without adding an Executor or changing plan acceptance rules.
+Baseline was committed and pushed first as `10c6961`. The user has now explicitly requested
+committing and pushing the restructuring; Claude review remains pending.
+
+#### What changed
+- Used `git mv` for tracked Python modules, case configuration, and Day 1 examples.
+- `src/test_agent/readers/excel.py`: existing Excel reader, relocated.
+- `src/test_agent/schemas/plan.py`: Pydantic models only; case rules removed from this module.
+- `src/test_agent/translation/validator.py`: existing rules split into `validate_generic_plan`,
+  `validate_route_contract`, and the coordinating `validate_plan`; ordering and outcomes preserved.
+- `src/test_agent/translation/translator.py`: existing GLM Translator, package imports updated.
+- `src/test_agent/cli.py`, `__main__.py`: `python -m test_agent translate` entry point.
+  Project directory defaults to cwd; explicit `--project-dir` and `--output-dir` are supported.
+  Reject path-like case IDs before creating evidence directories.
+- `cases/osm/`: amendments, contracts, and the sample workbook. The user explicitly approved
+  copying the workbook; SHA-256 matches the original Downloads file.
+- `examples/`: retained Day 1 scripts, with their root path adjusted after the move.
+- `pyproject.toml`, `uv.lock`: `test-agent` editable package, `test_agent` import name, Hatch build configuration.
+- `tests/`: original 16 checks retain their assertions; five CLI/artifact regression tests added.
+- `README.md`: updated commands, paths, and module responsibilities.
+- No empty future packages. New translation evidence uses
+  `artifacts/<run_id>/cases/<case_id>/`; historical evidence remains where it was.
+
+#### How to verify
+```sh
+uv sync --locked
+uv run python -m unittest discover -s tests -v
+uv run python -m test_agent --help
+uv run python -m test_agent translate --help
+uv run python -m test_agent translate cases/osm/WBS_testcase1_osm.xlsx --amendments cases/osm/amendments.json
+uv run python examples/browser_tool.py --offline
+```
+The translation command needs the configured model provider; all unit tests use fixtures/fakes.
+The Day 1 example uses a local HTML page with Chromium, not the live OSM site.
+
+#### Test output
+Required unittest command was run with a writable UV_CACHE_DIR in the sandbox:
+```text
+test_case_id_cannot_escape_artifact_directory (test_cli.PackageCliTests.test_case_id_cannot_escape_artifact_directory) ... ok
+test_invalid_plan_saves_rejection_without_approved_plan (test_cli.PackageCliTests.test_invalid_plan_saves_rejection_without_approved_plan) ... ok
+test_missing_case_does_not_call_model (test_cli.PackageCliTests.test_missing_case_does_not_call_model) ... ok
+test_package_entry_point_works_outside_project_directory (test_cli.PackageCliTests.test_package_entry_point_works_outside_project_directory) ... ok
+test_translate_preserves_plan_and_writes_case_scoped_evidence (test_cli.PackageCliTests.test_translate_preserves_plan_and_writes_case_scoped_evidence) ... ok
+test_amendments_never_overwrite_changed_text (test_translation.TranslationValidationTests.test_amendments_never_overwrite_changed_text) ... ok
+test_arbitrary_code_action_is_rejected (test_translation.TranslationValidationTests.test_arbitrary_code_action_is_rejected) ... ok
+test_comparator_cannot_replace_expected_driving_mode (test_translation.TranslationValidationTests.test_comparator_cannot_replace_expected_driving_mode) ... ok
+test_duration_limit_cannot_be_relaxed_or_tightened (test_translation.TranslationValidationTests.test_duration_limit_cannot_be_relaxed_or_tightened) ... ok
+test_inclusive_duration_is_rejected (test_translation.TranslationValidationTests.test_inclusive_duration_is_rejected) ... ok
+test_missing_cleanup_field_is_rejected (test_translation.TranslationValidationTests.test_missing_cleanup_field_is_rejected) ... ok
+test_missing_field_check_is_rejected (test_translation.TranslationValidationTests.test_missing_field_check_is_rejected) ... ok
+test_missing_step_is_rejected (test_translation.TranslationValidationTests.test_missing_step_is_rejected) ... ok
+test_model_cannot_claim_test_pass (test_translation.TranslationValidationTests.test_model_cannot_claim_test_pass) ... ok
+test_rewritten_source_is_rejected (test_translation.TranslationValidationTests.test_rewritten_source_is_rejected) ... ok
+test_submit_before_fill_is_rejected (test_translation.TranslationValidationTests.test_submit_before_fill_is_rejected) ... ok
+test_swapped_origin_destination_is_rejected (test_translation.TranslationValidationTests.test_swapped_origin_destination_is_rejected) ... ok
+test_unnumbered_and_duplicate_steps_rejected (test_translation.TranslationValidationTests.test_unnumbered_and_duplicate_steps_rejected) ... ok
+test_unresolved_issue_blocks_plan (test_translation.TranslationValidationTests.test_unresolved_issue_blocks_plan) ... ok
+test_valid_translation_and_nonblocking_notes (test_translation.TranslationValidationTests.test_valid_translation_and_nonblocking_notes) ... ok
+test_wrong_city_is_rejected (test_translation.TranslationValidationTests.test_wrong_city_is_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 21 tests in 0.811s
+
+OK
+```
+Also verified package/help commands, compilation, and `git diff --check`.
+The copied Excel is read by the CLI tests, and the full source-to-artifact pipeline is exercised
+with a fake Translator. A live GLM request was not needed for this refactor.
+
+#### Known limitations / open questions
+- CLI still translates one case per invocation; the suite loop and suite summary/report are later work.
+- Generic and route-contract checks are separated, but route validation still retains the original
+  OSM field names and semantics. This refactor does not introduce a general contract language.
+- Historical artifacts are not migrated; Day 1 teaching examples retain their legacy artifact layout.
+- Old root-script commands are replaced by the README commands above; run `uv sync --locked` first.
+- Review awaits Claude; Codex has not marked the task APPROVED. The user explicitly authorized
+  this commit/push without requesting a Claude review first.
+
 ### Baseline checkpoint (2026-10-13)
 Goal: commit and push the current Day 2 translation milestone before restructuring,
 as explicitly requested by the user. This checkpoint does not implement the folder moves.
@@ -96,11 +180,11 @@ Verified: `uv run python -m unittest discover -s tests` → 16 tests OK on the c
    ├── agents/reporter.py         # 8 (later)
    └── integrations/jira.py       # 10 (later); 9 = human confirmation prompt in CLI
    ```
-   > Codex: Accepted for the separate restructuring task. Keep translation and its validation
-   > together under `translation/`; align implemented components with workflow steps.
+   > Codex: Fixed in `src/test_agent/readers/`, `translation/`, `schemas/`, and `cli.py`.
+   > Translation and validation share their workflow home; future components remain absent.
 
 2. **SHOULD** Only create folders for steps that have code. No empty placeholder packages.
-   > Codex: Accepted for restructuring. Deferred here because this commit preserves the flat baseline.
+   > Codex: Fixed. Only packages with current code were created; no Executor or placeholder folders.
 
 3. **SHOULD** Split `translation_schema.py`: `schemas/plan.py` for models only.
    `validate_plan` currently hard-codes OSM-specific checks (route step, cities, travel mode,
@@ -108,33 +192,33 @@ Verified: `uv run python -m unittest discover -s tests` → 16 tests OK on the c
    (coverage, wording, URL, cleanup present) from the contract checks, so a second test case
    doesn't need new `if` branches. Behavior must stay identical in this task. Do the refactor
    only, and keep all 16 tests green.
-   > Codex: Accepted for restructuring. Models and generic/contract validation will be separated
-   > without changing behavior; the current 16 tests are green in this baseline.
+   > Codex: Fixed in `schemas/plan.py` and `translation/validator.py`. Generic and route-contract
+   > functions are separate; all original 16 tests and five new CLI tests pass.
 
 4. **SHOULD** Use `cases/` instead of `config/`. Amendments and contracts are per test case. Put the
    workbook in the repo too (it currently lives in `~/Downloads`, so runs aren't reproducible):
    `cases/osm/WBS_testcase1_osm.xlsx`, `cases/osm/amendments.json`, `cases/osm/contracts.json`.
    Ask the user before copying the Excel file.
-   > Codex: Accepted for restructuring. Use `cases/osm/` for case assets; obtain explicit workbook-copy
-   > authorization when that task starts. The current push contains no workbook or run artifacts.
+   > Codex: Fixed in `cases/osm/`. The user explicitly approved the workbook copy in this chat;
+   > its SHA-256 matches the source. Local credentials and run artifacts remain ignored.
 
 5. **SHOULD** The artifact layout must support many cases per run (diagram loop 2→6):
    ```
    artifacts/<run_id>/summary.json, report.html
    artifacts/<run_id>/cases/<case_id>/source.json, plan.json, validation.json, results.json, screenshots/
    ```
-   > Codex: Accepted for restructuring. Each case will get its own evidence directory within a run;
-   > suite-level summary/report files will be created only when their behavior is implemented.
+   > Codex: Fixed in `cli.py`: translation evidence is under `<run_id>/cases/<case_id>/`.
+   > CLI tests cover success and rejection in the new layout. Suite summary/report remain later work.
 
 6. **NIT** Move `browser_tool.py` and `day1_agent.py` to `examples/` (the README teaches with
    them); don't delete them. Update README paths.
-   > Codex: Accepted for restructuring. Preserve the Day 1 examples and update their documented commands.
+   > Codex: Fixed in `examples/` and README. Help commands and the local Playwright example were verified.
 
 7. **NIT** Use `python -m test_agent` instead of a `scripts/` folder. A `src/` layout needs
    `[build-system]` + package config in `pyproject.toml`; update test imports accordingly.
    Keep the package name consistent (`pyproject` currently says `wbs-browser-tests`).
-   > Codex: Accepted for restructuring. Add the package entry point and build configuration together
-   > with the moves, then update imports and verify the documented commands.
+   > Codex: Fixed in `__main__.py`, `cli.py`, `pyproject.toml`, imports, and README.
+   > Editable installation and package CLI invocation from outside the repo are verified.
 
 Acceptance for this task: the new layout runs, `translate` produces the same artifacts in the
 new location, 16+ tests pass, the README commands are updated, and the handoff includes test output.
