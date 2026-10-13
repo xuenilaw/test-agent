@@ -1,4 +1,4 @@
-# Day 1：Playwright → Agents SDK
+# Test Agent：Playwright、GLM 与自然语言测试用例
 
 今天只验证：打开页面 → 找到搜索框 → 输入 Hamburg → 断言输入值 → 截图 → 清理。
 这还不是路线搜索测试，也没有 AI 自愈或 Vision。
@@ -73,3 +73,49 @@ Day 1 的工具使用预先定义的 locator，Agent 只负责调用工具。
 
 官方资料：[Playwright Python](https://playwright.dev/python/docs/library)、
 [OpenAI Agents SDK 工具示例](https://developers.openai.com/cookbook/examples/partners/aws/chatgpt_agents_sdk_aws_agentcore_cookbook/notebooks/chatgpt_agents_sdk_aws_agentcore_cookbook)。
+
+## Day 2：只翻译，不执行
+
+```sh
+uv sync --locked
+uv run python translate_case.py /Users/xuenilaw/Downloads/WBS_testcase1_osm.xlsx --amendments case_amendments.json
+uv run python -m unittest discover -s tests -v
+```
+
+Excel 每条用例一行，Actions 和 Expected 的单元格内使用从 1 开始的连续编号。
+表头：TestCase_ID、Target Application、TestCase_Name、Pre-condition、Actions、Expected、Post action。
+读取时去掉表头和单元格首尾空白，不改变原 Excel。
+当前入口读取指定的一条用例，外层套件循环后续再实现。
+
+流程：Excel Reader → Translator Agent（GLM）→ Pydantic schema → Python 验证规则 → JSON。
+此入口没有浏览器工具，不导入 Playwright，也不调用执行器。
+GLM 返回普通 JSON，再在本地验证；不假设第三方支持 OpenAI 严格结构化输出接口。
+
+`case_amendments.json` 记录聊天中已确认的三项修订：步骤 4 请求路线、步骤 2 验证两个输入框、
+步骤 5 验证行程时间严格小于 180 分钟。只有原文完全匹配才应用，避免覆盖后来改过的 Excel。
+如果 Excel 已手动改好，省略 `--amendments`，并在步骤编号变化时更新约束文件。
+
+`translation_contracts.json` 是 OSM-001 的明确验收约束，用于检查城市、提交顺序、
+输入框可见性和严格时间阈值。它不是从模型输出生成的，避免模型自证正确。
+新用例的约束需要单独定义；没有约束的用例只有 schema 和来源覆盖检查。
+
+每次输出在 `artifacts/translation-<run_id>/`：
+
+- `source.json`：原文、有效文本、修订和验收约束。
+- `model-output.txt`：原始模型响应。
+- `candidate-plan.json`：通过 schema 的候选计划，即使后续规则拒绝也保留。
+- `validation.json`：VALIDATED 或 REJECTED、错误、非阻断 notes。
+- `plan.json`：只有全部已实现规则通过才保存。
+
+VALIDATED 不是测试 PASS，也不是完整语义正确的证明；尚未检查网页 locator 或路线。
+前置条件只保留文本，还没有执行检查。cleanup 已翻译但不执行，关闭 context 属于后续 Runner。
+任何缺步骤、源文字被改写、非法动作或未解决的 issues 都会拒绝计划。原始无修订版本的
+ETA/within 3 hours 语义未确认时应保留歧义，不能默默升级成通过验证的计划。
+
+### Validator 与 guardrail agent
+
+guardrail 是验证与阻断的机制，不一定是 agent。本阶段是确定性的 Python 验证门：
+动作白名单、参数类型、来源覆盖、明确的用例约束。暂未使用 SDK guardrail decorator。
+以后可增加语义审查 agent，检测自然语言中漏掉的含义；它补充规则，不替代规则。
+
+阅读顺序：`excel_reader.py` → `translation_schema.py` → `translator.py` → `translate_case.py`。

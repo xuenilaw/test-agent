@@ -1,0 +1,13 @@
+{
+  "OSM-001": {
+    "origin": "Hamburg",
+    "destination": "Berlin",
+    "route_step": 4,
+    "duration_step": 5,
+    "limit_minutes": 180,
+    "fields_step": 2,
+    "visible_fields": ["starting-point field", "destination field"],
+    "mode_step": 3,
+    "mode_values": ["Car", "Driving", "Car/Driving", "Car or driving"]
+  }
+}

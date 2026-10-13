@@ -3,4 +3,4 @@ name = "wbs-browser-tests"
 version = "0.1.0"
 description = "Learn Playwright first, then expose browser tools to an agent."
 requires-python = ">=3.11"
-dependencies = ["playwright", "openai-agents", "python-dotenv"]
+dependencies = ["playwright", "openai-agents", "python-dotenv", "openpyxl", "pydantic"]

@@ -1,0 +1,184 @@
+{
+  "description": "Reviewed reference plan for offline regression tests; not an unmodified model response.",
+  "case": {
+    "case_id": "OSM-001",
+    "name": "Destination ETA check",
+    "application": "OSM Website",
+    "preconditions": "1. Internet connection is OK",
+    "post_action": "Clean up all the input",
+    "actions": [
+      {
+        "number": 1,
+        "text": "Open Street Map"
+      },
+      {
+        "number": 2,
+        "text": "Click on Route Planning"
+      },
+      {
+        "number": 3,
+        "text": "Select Car or driving"
+      },
+      {
+        "number": 4,
+        "text": "Enter Hamburg as the starting point and Berlin as the destination. Request directions to start the route search."
+      },
+      {
+        "number": 5,
+        "text": "Observe or check the Estimated Arrival Time (ETA)"
+      }
+    ],
+    "expected": [
+      {
+        "number": 1,
+        "text": "OSM is open in browser"
+      },
+      {
+        "number": 2,
+        "text": "The starting-point and destination fields are visible."
+      },
+      {
+        "number": 3,
+        "text": "Car/ Driving is selected"
+      },
+      {
+        "number": 4,
+        "text": "The map correctly display the route from Hamburg to Berlin."
+      },
+      {
+        "number": 5,
+        "text": "The displayed estimated driving journey duration is under 3 hours (strictly less than 180 minutes)."
+      }
+    ]
+  },
+  "plan": {
+    "case_id": "OSM-001",
+    "preconditions": "1. Internet connection is OK",
+    "steps": [
+      {
+        "source_step": 1,
+        "source_action": "Open Street Map",
+        "source_expected": "OSM is open in browser",
+        "actions": [
+          {
+            "action": "navigate",
+            "target": "OSM Website",
+            "value": "https://www.openstreetmap.org/"
+          }
+        ],
+        "checks": [
+          {
+            "kind": "visible",
+            "target": "OSM Website",
+            "value": null,
+            "operator": null
+          }
+        ]
+      },
+      {
+        "source_step": 2,
+        "source_action": "Click on Route Planning",
+        "source_expected": "The starting-point and destination fields are visible.",
+        "actions": [
+          {
+            "action": "click",
+            "target": "route-planning control",
+            "value": null
+          }
+        ],
+        "checks": [
+          {
+            "kind": "visible",
+            "target": "starting-point field",
+            "value": null,
+            "operator": null
+          },
+          {
+            "kind": "visible",
+            "target": "destination field",
+            "value": null,
+            "operator": null
+          }
+        ]
+      },
+      {
+        "source_step": 3,
+        "source_action": "Select Car or driving",
+        "source_expected": "Car/ Driving is selected",
+        "actions": [
+          {
+            "action": "select",
+            "target": "travel-mode selector",
+            "value": "Car"
+          }
+        ],
+        "checks": [
+          {
+            "kind": "selected",
+            "target": "Car/Driving travel mode",
+            "value": "Car",
+            "operator": "equals"
+          }
+        ]
+      },
+      {
+        "source_step": 4,
+        "source_action": "Enter Hamburg as the starting point and Berlin as the destination. Request directions to start the route search.",
+        "source_expected": "The map correctly display the route from Hamburg to Berlin.",
+        "actions": [
+          {
+            "action": "fill",
+            "target": "starting-point field",
+            "value": "Hamburg"
+          },
+          {
+            "action": "fill",
+            "target": "destination field",
+            "value": "Berlin"
+          },
+          {
+            "action": "click",
+            "target": "request-directions button",
+            "value": null
+          }
+        ],
+        "checks": [
+          {
+            "kind": "route_connects",
+            "target": "route",
+            "value": "Hamburg to Berlin",
+            "operator": "equals"
+          }
+        ]
+      },
+      {
+        "source_step": 5,
+        "source_action": "Observe or check the Estimated Arrival Time (ETA)",
+        "source_expected": "The displayed estimated driving journey duration is under 3 hours (strictly less than 180 minutes).",
+        "actions": [],
+        "checks": [
+          {
+            "kind": "duration_minutes",
+            "target": "estimated journey duration",
+            "value": 180,
+            "operator": "less_than"
+          }
+        ]
+      }
+    ],
+    "cleanup": [
+      {
+        "action": "fill",
+        "target": "starting-point field",
+        "value": ""
+      },
+      {
+        "action": "fill",
+        "target": "destination field",
+        "value": ""
+      }
+    ],
+    "issues": [],
+    "notes": []
+  }
+}
