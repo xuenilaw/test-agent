@@ -25,12 +25,14 @@ class PackageCliTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.output = Path(self.temp.name)
 
-    def run_cli(self, plan, case="OSM-001", workbook=None, contracts=None):
+    def run_cli(self, plan, case="OSM-001", workbook=None, contracts=None, vocabulary=None):
         args = ["--project-dir", str(ROOT), "translate",
                 str(workbook or ROOT / "cases/osm/WBS_testcase1_osm.xlsx"),
                 "--output-dir", str(self.output), "--case", case]
         if contracts is not None:
             args.extend(["--contracts", str(contracts)])
+        if vocabulary is not None:
+            args.extend(["--vocabulary", str(vocabulary)])
         with patch("test_agent.cli.translate", new=AsyncMock(return_value=json.dumps(plan))) as model, \
                 patch("test_agent.cli.load_dotenv"), \
                 patch.dict(os.environ, {"OPENAI_API_KEY": "fake-test-key", "OPENAI_MODEL": "fake-model"}), \
@@ -55,6 +57,9 @@ class PackageCliTests(unittest.TestCase):
         report = json.loads((folder / "validation.json").read_text())
         self.assertEqual(report["status"], "VALIDATED")
         self.assertTrue(report["contract_applied"])
+        self.assertTrue(report["vocabulary_applied"])
+        self.assertEqual(set(model.call_args.kwargs["vocabulary"]["targets"]),
+                         set(json.loads((ROOT / "cases/osm/vocabulary.json").read_text())["targets"]))
         self.assertFalse(report["browser_executed"])
         source = json.loads((folder / "source.json").read_text())
         self.assertNotIn("amendments", source)
@@ -109,6 +114,7 @@ class PackageCliTests(unittest.TestCase):
         folder = next(self.output.glob("translation-*/cases/OSM-001"))
         report = json.loads((folder / "validation.json").read_text())
         self.assertFalse(report["contract_applied"])
+        self.assertFalse(report["vocabulary_applied"])
         self.assertIsNone(json.loads((folder / "source.json").read_text())["contract"])
 
     def test_sidecar_without_selected_case_reports_no_contract(self):
@@ -143,3 +149,32 @@ class PackageCliTests(unittest.TestCase):
         result, model = self.run_cli(self.fixture["plan"], contracts=self.output / "missing.json")
         self.assertEqual(result, 1)
         model.assert_not_awaited()
+
+    def test_unknown_action_check_and_cleanup_targets_rejected_during_translation(self):
+        for location in ("action", "check", "cleanup"):
+            with self.subTest(location=location):
+                plan = copy.deepcopy(self.fixture["plan"])
+                if location == "action":
+                    plan["steps"][1]["actions"][0]["target"] = "Open routes please"
+                elif location == "check":
+                    # This alias works at execution time, but new plans must use the canonical name.
+                    plan["steps"][4]["checks"][0]["target"] = "route duration"
+                else:
+                    plan["cleanup"][0]["target"] = "Origin textbox"
+                result, _ = self.run_cli(plan)
+                self.assertEqual(result, 1)
+                folder = max(self.output.glob("translation-*/cases/OSM-001"))
+                report = json.loads((folder / "validation.json").read_text())
+                self.assertTrue(report["vocabulary_applied"])
+                self.assertTrue(any("UNKNOWN_TARGET" in e for e in report["errors"]))
+                self.assertFalse((folder / "plan.json").exists())
+
+    def test_malformed_vocabulary_rejected_before_model_call(self):
+        path = self.output / "bad-vocabulary.json"
+        path.write_text('{"targets": {}}')
+        result, model = self.run_cli(self.fixture["plan"], vocabulary=path)
+        self.assertEqual(result, 1)
+        model.assert_not_awaited()
+        folder = next(self.output.glob("translation-*/cases/OSM-001"))
+        report = json.loads((folder / "validation.json").read_text())
+        self.assertTrue(any("Vocabulary schema" in e and "targets" in e for e in report["errors"]))

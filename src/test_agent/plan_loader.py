@@ -6,6 +6,7 @@ from pathlib import Path
 from test_agent.readers.excel import read_case
 from test_agent.schemas.contracts import RouteContract
 from test_agent.schemas.plan import TranslationPlan
+from test_agent.schemas.vocabulary import TargetVocabulary
 from test_agent.translation.validator import validate_plan
 
 
@@ -31,7 +32,15 @@ def load_plan(folder: Path) -> tuple[TranslationPlan, dict]:
     contract = RouteContract.model_validate(contracts[plan.case_id]).model_dump() if plan.case_id in contracts else None
     if contract != source.get("contract"):
         raise ValueError("Contract requirements changed; translate again.")
-    errors = validate_plan(plan, current, source["application_url"], contract)
+    vocabulary = None
+    if "vocabulary_file" in source:
+        path = Path(source["vocabulary_file"])
+        vocabulary = (TargetVocabulary.model_validate_json(path.read_text(encoding="utf-8")).model_dump()
+                      if path.exists() else None)
+        if vocabulary != source.get("vocabulary"):
+            raise ValueError("Target vocabulary changed; translate again.")
+    errors = validate_plan(plan, current, source["application_url"], contract,
+                           set(vocabulary["targets"]) if vocabulary is not None else None)
     if errors:
         raise ValueError("Loaded plan rejected: " + "; ".join(errors))
     source["contract"] = contract

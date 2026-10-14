@@ -115,7 +115,7 @@
         "checks": [
           {
             "kind": "selected",
-            "target": "Car/Driving travel mode",
+            "target": "travel-mode selector",
             "value": "Car",
             "operator": "equals"
           }

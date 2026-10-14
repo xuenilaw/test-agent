@@ -136,7 +136,7 @@ src/test_agent/
   schemas/plan.py            # 纯 Pydantic 数据模型
   translation/translator.py  # workflow 1b：自然语言翻译
   translation/validator.py   # 通用验证和路线约束验证，分开维护
-cases/osm/                  # 样例 Excel、contracts.json
+cases/osm/                  # 样例 Excel、contracts.json、vocabulary.json、locators.json
 examples/                   # 保留 Day 1 Playwright 和 Agent 教学脚本
 tests/fixtures/             # 不需要网络或真实模型的回归测试
 docs/reviews/               # Codex handoff 与 Claude review
@@ -151,8 +151,7 @@ CLI 默认从当前目录读取 `.env` 并写入 `artifacts/`，从 workbook 所
 `--output-dir` 可覆盖 artifacts 的根目录。执行器、套件 summary 和 HTML 报告后续实现，
 当前不创建空的预留代码目录或假的报告文件。
 
-已知限制：Translator prompt 目前包含 OSM 专用词汇和示例。增加第二个 suite 时，
-将这些词汇/hints 移到 `cases/<suite>/`；Part A 未修改 prompt，Part B 的确定性 Executor 见下节。
+Translator 的套件词汇/hints 现在位于 `cases/osm/vocabulary.json`，通用 prompt 不再硬编码 OSM 控件名。
 
 ## Part B：执行一条已验证的计划
 
@@ -201,3 +200,21 @@ BLOCKED（SELECTION_MISMATCH），避免把执行器的选择错误误报为网�
 起点和终点字段包含 contract 城市，不证明地图上的路线几何正确；results.json 明确记录
 `route_geometry_verified: false`。其他通用前置条件尚未解释执行，网络前置条件由实际导航结果判断。
 显示时间等于或超过 3 小时应 FAILED；不可解析的时间应 BLOCKED，不能改阈值来让它通过。
+
+## Translator 的标准 target 名称
+
+翻译时默认读取 workbook 旁边的 `vocabulary.json`，也可以用 `--vocabulary` 指定。
+文件的 `targets` 声明标准名称和含义，`hints` 保存套件说明；不包含 CSS selector。
+Translator 收到整个列表，必须把自然语言同义词翻译为标准名称。例如 route time/ETA
+在行程时间语境中统一为 `estimated journey duration`。
+
+Python 验证每个 action、check 和 cleanup 的 target。即使名称属于运行时 alias，
+新计划也必须使用 vocabulary 中的标准名称，否则 REJECTED，错误为 UNKNOWN_TARGET；
+保留 candidate-plan.json 供排错，但不生成可执行的 plan.json。不会自动修正错误名称。
+validation.json 的 `vocabulary_applied` 明确说明是否执行了这项检查。默认文件不存在时
+允许旧的通用翻译流程，并记录 false；显式指定不存在或格式错误的文件在调用模型前拒绝。
+
+来源快照保留 vocabulary 内容和路径。执行前再次检查 vocabulary 是否变化，并验证 target。
+已有不带 vocabulary 快照的历史计划仍兼容原有检查，运行时 aliases 也保留。
+重新翻译可以启用新验证。声明 target 不要求 locator 已存在，后续 Planner 可以为已声明
+但尚未定位的目标找 DOM locator；UNKNOWN_TARGET 和运行时 NO_LOCATOR 是不同问题。

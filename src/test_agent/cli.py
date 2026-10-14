@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from test_agent.readers.excel import read_case
 from test_agent.schemas.contracts import RouteContract
 from test_agent.schemas.plan import TranslationPlan
+from test_agent.schemas.vocabulary import TargetVocabulary
 from test_agent.translation.validator import validate_plan
 from test_agent.translation.translator import translate
 
@@ -29,6 +30,7 @@ async def run_translation(args: argparse.Namespace) -> int:
     output = output_root.resolve() / run_id / "cases" / args.case
     output.mkdir(parents=True)
     report = {"status": "REJECTED", "browser_executed": False, "contract_applied": False,
+              "vocabulary_applied": False,
               "validation_scope": "schema, source coverage, and explicit case constraints; not full semantic equivalence",
               "errors": [], "output_directory": str(output)}
     schema_stage = "Contract schema"
@@ -42,8 +44,13 @@ async def run_translation(args: argparse.Namespace) -> int:
             raise ValueError("Contract file must contain an object keyed by case ID.")
         contract = (RouteContract.model_validate(contracts[args.case]).model_dump()
                     if args.case in contracts else None)
+        vocabulary_path = args.vocabulary or args.workbook.parent / "vocabulary.json"
+        schema_stage = "Vocabulary schema"
+        vocabulary = (TargetVocabulary.model_validate_json(vocabulary_path.read_text(encoding="utf-8")).model_dump()
+                      if args.vocabulary is not None or vocabulary_path.exists() else None)
         write_json(output / "source.json", {"case": case, "contract": contract,
                                             "contract_file": str(contracts_path.resolve()),
+                                            "vocabulary": vocabulary, "vocabulary_file": str(vocabulary_path.resolve()),
                                             "application_url": args.url})
         load_dotenv(project_root / ".env")
         api_key = os.getenv("OPENAI_API_KEY", "").strip()
@@ -51,12 +58,14 @@ async def run_translation(args: argparse.Namespace) -> int:
         if not api_key or not model:
             raise ValueError("Set OPENAI_API_KEY and OPENAI_MODEL or OPENAI_DEFAULT_MODEL in .env.")
         raw = await translate(case, args.url, api_key=api_key, model_name=model,
-                              base_url=os.getenv("OPENAI_BASE_URL") or None)
+                              base_url=os.getenv("OPENAI_BASE_URL") or None, vocabulary=vocabulary)
         (output / "model-output.txt").write_text(raw, encoding="utf-8")
         schema_stage = "Plan schema"
         plan = TranslationPlan.model_validate_json(raw)
-        report["errors"] = validate_plan(plan, case, args.url, contract)
+        report["errors"] = validate_plan(plan, case, args.url, contract,
+                                         set(vocabulary["targets"]) if vocabulary is not None else None)
         report["contract_applied"] = contract is not None
+        report["vocabulary_applied"] = vocabulary is not None
         report["notes"] = plan.notes
         write_json(output / "candidate-plan.json", plan.model_dump())
         if not report["errors"]:
@@ -90,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     translate_parser.add_argument("workbook", type=Path)
     translate_parser.add_argument("--case", default="OSM-001")
     translate_parser.add_argument("--contracts", type=Path, help="Default: contracts.json beside the workbook (optional)")
+    translate_parser.add_argument("--vocabulary", type=Path, help="Default: vocabulary.json beside the workbook (optional)")
     translate_parser.add_argument("--output-dir", type=Path, help="Default: <project-dir>/artifacts")
     translate_parser.add_argument("--url", default="https://www.openstreetmap.org/")
     run_parser = commands.add_parser("run", help="Execute a validated translation case folder without AI")

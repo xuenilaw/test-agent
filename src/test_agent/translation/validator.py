@@ -83,8 +83,17 @@ def validate_route_contract(plan: TranslationPlan, contract: dict) -> list[str]:
 
 
 def validate_plan(plan: TranslationPlan, case: dict, application_url: str,
-                  contract: dict | None = None) -> list[str]:
+                  contract: dict | None = None, known_targets: set[str] | None = None) -> list[str]:
     errors = validate_generic_plan(plan, case, application_url)
     if contract:
         errors.extend(validate_route_contract(plan, contract))
+    if known_targets is not None:
+        for step in plan.steps:
+            for kind, entries in (("action", step.actions), ("check", step.checks)):
+                for item in entries:
+                    if item.target not in known_targets:
+                        errors.append(f"UNKNOWN_TARGET: step {step.source_step} {kind} target '{item.target}'")
+        for item in plan.cleanup:
+            if item.target not in known_targets:
+                errors.append(f"UNKNOWN_TARGET: cleanup target '{item.target}'")
     return errors
