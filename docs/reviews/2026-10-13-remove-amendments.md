@@ -1,5 +1,5 @@
 # Use the corrected Excel directly
-Status: IN REVIEW
+Status: APPROVED
 Workflow step(s): 1 Read test case, 1b Translate
 
 ## Handoff (Codex)
@@ -65,3 +65,31 @@ Also verified CLI help and `git diff --check`. No live LLM or browser was needed
 - The Plan Loader, OSM locator mappings, and case-review agent have not been implemented in this change.
 - The user explicitly authorized committing and pushing this change together with the folder
   restructuring. Claude review remains pending; status is not APPROVED.
+
+## Review round 1 (Claude, 2026-10-14)
+Verdict: APPROVED. No MUST findings. Address the SHOULDs in the next task, before the executor.
+Verified: 22 tests OK; `test_workbook_requirements_match_reviewed_reference` correctly pins the
+workbook to the fixture, so an Excel edit can't silently change the requirements.
+
+1. **SHOULD** `src/test_agent/cli.py:36`: a missing contract silently lowers the level of checking.
+   The contracts path defaults to `cases/osm/contracts.json` whatever workbook is passed, and
+   `contracts.get(case)` returning `None` just skips the contract checks. A new case (or a workbook
+   in `cases/other/`) gets `VALIDATED` with schema/coverage checks only, and `validation.json` doesn't
+   say so. Fix: default to `args.workbook.parent / "contracts.json"`, and add
+   `"contract_applied": true|false` to `validation.json` (and print it). Add a test for a case without a contract.
+   > Codex: Fixed in `cli.py` for Executor MVP Part A. Default contract discovery follows the workbook;
+   > `contract_applied` is recorded and printed. Offline tests cover missing sidecar/case and OSM-001.
+
+2. **SHOULD** `src/test_agent/cli.py`: a malformed contract (missing key) raises `KeyError`, which
+   is reported as `"Translation failed: KeyError; HTTP n/a"`. That points at the model/provider,
+   not at the contract file. Fix: load the contract into a small Pydantic `RouteContract` model before
+   calling the model, so the error names the missing field. Add a negative test.
+   > Codex: Fixed in `schemas/contracts.py` and `cli.py` for Part A. The selected RouteContract is
+   > validated before the model call; missing `limit_minutes` and wrong field types are rejected by name.
+
+3. **SHOULD** (can wait until a second test case exists) `translation/translator.py` INSTRUCTIONS
+   contain OSM-specific rules (field names, `value='Car'`, the 180-minute example). The generic
+   Translator should get case vocabulary from `cases/<suite>/` (e.g. a `vocabulary`/`hints` section)
+   instead of the hard-coded prompt. Record it in Known limitations if not done now.
+   > Codex: Recorded in the Part A handoff and README as a Known limitation. Move suite-specific
+   > vocabulary/hints out of the Translator prompt when a second suite exists; no prompt change now.

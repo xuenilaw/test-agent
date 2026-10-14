@@ -1,0 +1,10 @@
+{
+  "OSM Website": {"strategy":"css","value":"#map","aliases":["application","page"]},
+  "route-planning control": {"strategy":"css","value":"a[title='Find directions between two points']","aliases":["route-planning button"],"ready_selector":"#directions-ready"},
+  "starting-point field": {"strategy":"placeholder","value":"From"},
+  "destination field": {"strategy":"placeholder","value":"To"},
+  "travel-mode selector": {"strategy":"css","value":"label[title='Car']","aliases":["Car/Driving travel mode"]},
+  "request-directions button": {"strategy":"placeholder","value":"To","submit_key":"Enter","submit_effect_target":"route"},
+  "route": {"strategy":"css","value":"#route-summary","aliases":["displayed route","route summary/directions panel"]},
+  "estimated journey duration": {"strategy":"css","value":"#route-duration","aliases":["displayed journey duration","estimated driving duration"]}
+}

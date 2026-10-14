@@ -99,6 +99,11 @@ Downloads 中的旧副本尚未更新，请使用 `cases/osm/` 内的文件。
 `cases/osm/contracts.json` 是 OSM-001 的明确验收约束，用于检查城市、提交顺序、
 输入框可见性和严格时间阈值。它不是从模型输出生成的，避免模型自证正确。
 新用例的约束需要单独定义；没有约束的用例只有 schema 和来源覆盖检查。
+默认在所选 workbook 的同一目录查找 `contracts.json`，也可以用 `--contracts` 指定。
+没有默认文件或没有该 Case ID 时，仍可翻译，但输出会明确显示 `contract_applied: false`。
+`contract_applied: true` 表示候选计划已执行该用例的 contract 检查，不等于检查通过或测试 PASS。
+选中的 contract 会先经过 `schemas/contracts.py` 的 `RouteContract` 校验；字段缺失或类型错误
+会在调用模型前 REJECTED，错误会指出 contract 字段。显式指定不存在的文件也会拒绝。
 
 每次输出在 `artifacts/translation-<run_id>/cases/<case_id>/`（旧运行记录保留在原位置）：
 
@@ -140,8 +145,59 @@ artifacts/<run_id>/cases/<case_id>/  # 每条用例独立证据
 
 从项目根目录运行 `uv sync --locked`，它安装 editable package。
 目录名 `test_agent` 用于 Python import，发行包名 `test-agent` 与 GitHub repo 一致。
-CLI 默认从当前目录读取 `.env`、`cases/osm/contracts.json` 并写入 `artifacts/`。
+CLI 默认从当前目录读取 `.env` 并写入 `artifacts/`，从 workbook 所在目录读取 `contracts.json`。
 从其他目录调用时，可用 `python -m test_agent --project-dir /path/to/test-agent translate ...`；
 显式提供的 workbook/contracts 相对路径仍相对于当前工作目录。
 `--output-dir` 可覆盖 artifacts 的根目录。执行器、套件 summary 和 HTML 报告后续实现，
 当前不创建空的预留代码目录或假的报告文件。
+
+已知限制：Translator prompt 目前包含 OSM 专用词汇和示例。增加第二个 suite 时，
+将这些词汇/hints 移到 `cases/<suite>/`；Part A 未修改 prompt，Part B 的确定性 Executor 见下节。
+
+## Part B：执行一条已验证的计划
+
+```sh
+uv run python -m test_agent translate cases/osm/WBS_testcase1_osm.xlsx
+# 把下面路径换成上一条命令输出的 output_directory
+uv run python -m test_agent run artifacts/<translation-run>/cases/OSM-001 --locators cases/osm/locators.json --headed
+```
+
+`run` 不调用 LLM。Plan Loader 要求 VALIDATED、合法的 plan.json 和新格式 source.json，
+并再次检查当前 Excel、contract 与保存的来源是否一致，再跑原有验证规则。
+输入错误退出码为 2，且不启动浏览器。旧 amendments 格式或 Excel/contract 已改动时请重新翻译。
+自定义 `--contracts` 路径会保存到 source.json。旧 artifact 没有此字段时按 workbook 旁的路径查找。
+
+手写 locator 将语义名称映射到真实网页元素。例如：
+```json
+{"starting-point field": {"strategy":"placeholder","value":"From"}}
+```
+支持 `role`（role + name）、`label`、`placeholder`、`text`、`test_id`、`css`。
+`aliases` 列出明确的同义 target；不会模糊匹配。重复 alias 或非法策略是输入错误。
+未知 target 是 BLOCKED，reason 为 `no locator for target '<name>'`，code 为 NO_LOCATOR。
+元素只保留可见匹配，并要求数量正好为 1；不会使用 `.first()` 隐藏歧义。
+
+实测 OSM 使用可见 Car label 配合隐藏 radio；执行 select 时点击 label，检查 radio 的真实 checked/value。
+OSM 没有 Go 按钮：`request-directions button` 映射到 To 输入框，并使用 `submit_key: "Enter"`。
+这项实现细节也记录在 results.json 的 action 中。使用英文 locale，固定 desktop viewport。
+点击路线规划后，先等待 `ready_selector` 指定的侧栏模板挂载，再填字段。
+按 Enter 后，等待 `submit_effect_target` 对应的路线结果可见；没有效果时 BLOCKED，
+code 为 SUBMIT_NO_EFFECT。只提交一次，记录 attempts=1，不自动重试动作或断言。
+radio/label 的选择会先比对真实 control value 和明确的 selection_aliases；不匹配时
+BLOCKED（SELECTION_MISMATCH），避免把执行器的选择错误误报为网页 FAILED。
+路线结果读取 `#directions_route`，行程时间读取 `#directions_route_time`，格式如 `2:56`。
+
+状态：PASSED 为执行及检查成功；FAILED 为已获得实际值但不符合预期；BLOCKED 为无法定位、
+执行、解析或加载；停止后的步骤为 NOT_RUN。退出码 0 = PASSED，1 = FAILED/BLOCKED，2 = 输入错误。
+后续未执行的动作和断言也保留为 NOT_RUN。清理始终尝试执行，清理错误单独记录，不改变用例状态。
+
+结果保存在 `artifacts/run-<run_id>/cases/<case_id>/`：results.json、执行时的 plan/source/locators
+快照、screenshots/step-<n>.png、screenshots/final.png 和 trace.zip。final 截图在清理前拍摄。
+可用 `uv run playwright show-trace <trace.zip路径>` 回看浏览器动作。
+
+本地测试使用 `tests/fixtures/fake_osm.html` 拦截 OSM URL，其他请求全部中止；没有真实模型调用。
+测试需要项目 `.browsers/` 内的 Chromium，缺少时浏览器测试明确 skip。
+
+限制：只执行一条用例，没有 Planner、自愈或 Vision。route_connects 只检查路线面板可见、
+起点和终点字段包含 contract 城市，不证明地图上的路线几何正确；results.json 明确记录
+`route_geometry_verified: false`。其他通用前置条件尚未解释执行，网络前置条件由实际导航结果判断。
+显示时间等于或超过 3 小时应 FAILED；不可解析的时间应 BLOCKED，不能改阈值来让它通过。

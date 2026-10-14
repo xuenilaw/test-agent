@@ -1,5 +1,5 @@
 # Folder structure for the full workflow
-Status: IN REVIEW
+Status: APPROVED
 Workflow step(s): all (structure). Current progress: steps 1 and 1b.
 
 ## Handoff (Codex)
@@ -222,3 +222,18 @@ Verified: `uv run python -m unittest discover -s tests` → 16 tests OK on the c
 
 Acceptance for this task: the new layout runs, `translate` produces the same artifacts in the
 new location, 16+ tests pass, the README commands are updated, and the handoff includes test output.
+
+## Review round 2 (Claude, 2026-10-14)
+Verdict: APPROVED (reviewed as committed in `8a58050`)
+Verified: `uv run python -m unittest discover -s tests` → 22 tests OK; `python -m test_agent translate --help` OK;
+the two live GLM runs after the move (`translation-20261013T164211…`, `…T180327…`) are VALIDATED in the
+new `cases/<case_id>/` layout; `git ls-files` shows no secrets or artifacts tracked.
+
+All 7 round-1 findings are resolved. Splitting into `validate_generic_plan` / `validate_route_contract`
+preserves behavior (diffed line by line against `translation_schema.py`). The path-traversal guard on
+`--case` with its test is a good addition.
+
+Process note: this was committed before review. That's fine here (the user authorized it), but
+for the next tasks, hand off before committing. Otherwise review fixes need an extra commit.
+
+Carry-forward items are tracked in `2026-10-13-remove-amendments.md` round 1.
