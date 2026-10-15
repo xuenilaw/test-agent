@@ -31,6 +31,7 @@ def declare_vision(folder):
 
 
 class FakeVision:
+    provider_name='anthropic'
     def __init__(self, **changes):
         verdict = changes.pop("verdict", "match")
         self.observation = dict(confidence=0.95,

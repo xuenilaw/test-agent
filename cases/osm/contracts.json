@@ -22,7 +22,10 @@
         "step": 4,
         "kind": "route_geometry",
         "requirement": "The map shows one continuous route line from Hamburg to Berlin.",
-        "min_confidence": 0.9
+        "min_confidence": {
+          "clef": 0.85,
+          "anthropic": 0.9
+        }
       }
     ],
     "type": "route",
@@ -51,7 +54,10 @@
         "step": 4,
         "kind": "route_geometry",
         "requirement": "The map shows one continuous route line from Hamburg to Munich.",
-        "min_confidence": 0.9
+        "min_confidence": {
+          "clef": 0.85,
+          "anthropic": 0.9
+        }
       }
     ],
     "type": "route",

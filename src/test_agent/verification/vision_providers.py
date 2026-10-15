@@ -61,6 +61,7 @@ def reason_token(value):
 
 
 class GLMVision:
+    provider_name='glm'
     def __init__(self, *, api_key: str, model: str, base_url: str):
         self.api_key, self.model, self.base_url = api_key, model, base_url
 
@@ -96,6 +97,7 @@ class GLMVision:
 
 
 class ClaudeVision:
+    provider_name='anthropic'
     def __init__(self, *, api_key: str, model: str):
         self.api_key, self.model = api_key, model
 
@@ -133,7 +135,7 @@ class ClaudeVision:
         except Exception as exc:
             raise transport_error(exc, start) from None
         meta = {"provider": "anthropic", "model": self.model, "requested_model": self.model,
-                "latency_ms": elapsed(start), "http_status": status}
+                "latency_ms": elapsed(start), "http_status": status,"api_host":"api.anthropic.com"}
         try:
             response = json.loads(raw)
         except (json.JSONDecodeError, UnicodeError):
@@ -161,7 +163,7 @@ class ClaudeVision:
 
 
 def provider_from_env() -> VisionProvider:
-    provider = os.getenv("VISION_PROVIDER", "anthropic")
+    provider = os.getenv("VISION_PROVIDER", "clef")
     if provider == 'clef':
         from test_agent.verification.clef import ClefDecisions
         if os.getenv('VISION_MODEL') != 'cloudflare/clef':
@@ -176,3 +178,15 @@ def provider_from_env() -> VisionProvider:
     if not key or not model:
         raise VisionError("CONFIG", fields=["ANTHROPIC_API_KEY/VISION_API_KEY", "VISION_MODEL"])
     return ClaudeVision(api_key=key, model=model)
+
+
+def click_provider_from_env():
+    """Coordinate clicks always use Claude; route-provider credentials stay separate."""
+    key=os.getenv('ANTHROPIC_API_KEY')
+    if os.getenv('VISION_PROVIDER')=='anthropic':
+        key=key or os.getenv('VISION_API_KEY')
+    model=os.getenv('VISION_CLICK_MODEL') or (
+        os.getenv('VISION_MODEL') if os.getenv('VISION_PROVIDER')=='anthropic' else None) or 'claude-haiku-5-5'
+    if not key:
+        raise VisionError('CONFIG',fields=['ANTHROPIC_API_KEY'])
+    return ClaudeVision(api_key=key,model=model)

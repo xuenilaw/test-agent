@@ -39,6 +39,8 @@ def blind_questions(cities):
 
 class ClefDecisions:
     observation_schema='clef-blind-v1'
+    provider_name='clef'
+    model=MODEL
 
     def __init__(self,api_key,cities=None):
         self.client=DecisionsClient(api_key)
@@ -113,6 +115,8 @@ class DecisionsClient:
         safe_usage={k:v for k,v in usage.items() if k in {'input_tokens','output_tokens','cost'} and
                     type(v) in (int,float) and math.isfinite(v) and v >= 0} if isinstance(usage,dict) else {}
         return dict(**meta,answers=validated,usage=safe_usage,
+            api_host='openrouter.ai',
+            upstream_host=(response.get('upstream_host')[:200] if isinstance(response.get('upstream_host'),str) else None),
             upstream_provider=str(response.get('provider','unknown'))[:80],id=str(response.get('id',''))[:200])
 
 

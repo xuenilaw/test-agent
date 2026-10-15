@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Literal
 from pydantic import Field, model_validator
 from test_agent.schemas.plan import StrictModel
-from test_agent.schemas.contracts import NonblankText, RouteContract
+from test_agent.schemas.contracts import NonblankText, RouteContract,threshold_for
 from test_agent.verification.vision import VisualObservation, ClefObservation, decide, verify_route_image
 
 
@@ -156,7 +156,7 @@ async def run_calibration(folder: Path, *, provider, contract: dict, project_roo
     definitions = [v.model_dump() for v in typed.vision_checks if v.kind=='route_geometry']
     if len(definitions)!=1:
         raise ValueError('Calibration requires exactly one route_geometry contract declaration')
-    definition=definitions[0]
+    definition={**definitions[0],'min_confidence':threshold_for(definitions[0],getattr(provider,'provider_name',None))}
     if any(label.requirement.model_dump()!=dict(origin=typed.origin,destination=typed.destination) for label in labels):
         raise ValueError('Calibration labels must match the current contract endpoints')
     stamp=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')

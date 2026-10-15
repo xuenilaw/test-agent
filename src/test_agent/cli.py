@@ -131,6 +131,15 @@ def main(argv: list[str] | None = None) -> int:
                         help="Directory containing .env, cases/ and artifacts/ (default: current directory)")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser('clef-smoke',help='One text-only OpenRouter Decisions request (no images)')
+    report_parser=commands.add_parser('report',help='Build offline HTML from a saved suite or repeat folder')
+    report_parser.add_argument('folder',type=Path)
+    repeat_parser=commands.add_parser('repeat',help='Repeat execution with current validated plans, without translation')
+    repeat_parser.add_argument('workbook',type=Path)
+    repeat_parser.add_argument('--locators',type=Path,required=True)
+    repeat_parser.add_argument('--times',type=int,default=3)
+    repeat_parser.add_argument('--reuse',action='store_true',help='Always enforced for repeat; missing/stale plans are rejected')
+    repeat_parser.add_argument('--headed',action='store_true')
+    repeat_parser.add_argument('--output-dir',type=Path)
     translate_parser = commands.add_parser("translate", help=__doc__)
     translate_parser.add_argument("workbook", type=Path)
     translate_parser.add_argument("--case", default="OSM-001")
@@ -174,6 +183,18 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument("--output-dir", type=Path)
     run_parser.add_argument("--skip-vision", action="store_true", help="Skip declared vision checks as BLOCKED for offline/dev runs")
     args = parser.parse_args(argv)
+    if args.command in {'report','repeat'}:
+        try:
+            if args.command=='report':
+                from test_agent.reporting import build_report
+                print(build_report(args.folder));return 0
+            from test_agent.repeatability import run_repeat
+            result=asyncio.run(run_repeat(args.workbook,args.locators,args.project_dir.resolve(),times=args.times,
+                                          headed=args.headed,output_root=args.output_dir))
+            print(json.dumps(dict(cases=result['cases'],output_directory=result['output_directory']),ensure_ascii=False,indent=2))
+            return 0 if result['summary']['status']=='PASSED' else 1
+        except (ValueError,OSError) as exc:
+            print(str(exc));return 2
     if args.command == 'clef-smoke':
         from test_agent.verification.clef import smoke
         return asyncio.run(smoke(args.project_dir.resolve()))

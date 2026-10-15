@@ -454,11 +454,11 @@ Vision click 只支持 click：人工 locator → cache → heal 都不能定位
 只有人工 locator 配置同时声明 `vision_click_effect` 和 `vision_click: {"min_confidence": 0.90}` 的 target 可用；
 effect 自己也必须有人工 locator。模型只收到完整 1280×800 PNG、target 的 vocabulary description 和输出 schema，
 不接收用例的 expected/value。Python 严格验证 found、confidence≥0.90 和图内坐标，一条用例每个 target 最多一次。
-配置的 provider 必须支持坐标（当前 Claude）；Clef 不支持，返回 VISION_CONFIG。
+点击使用独立 Claude provider；即使 route provider 选 Clef，点击也走 Claude 的凭证/模型，详见 Day 6 配置。
 
 点击前 effect 必须不可见，点击后必须通过人工 locator 变为唯一可见；没有效果则 VISION_CLICK_NO_EFFECT，不重试。
 因此错误点击不能单凭模型自信得到 PASS：Python 的 effect 检查和后续断言决定结果；这里不新增视觉真假判定的校准集。
-attempts/successes 仅为本次观察数量，不能当模型准确率。route vision 仍使用冻结图像校准，阈值保持 0.90。
+attempts/successes 仅为本次观察数量，不能当模型准确率。route vision 仍使用冻结图像校准；当前阈值为 Clef 0.85 / Claude 0.90（见 Day 6 的事后选阈值说明）。
 依据 [Claude 坐标文档](https://platform.claude.com/docs/en/build-with-claude/vision-coordinates)，1280×800 在标准上限内；
 请求还设置 oversized_image=error，禁止服务端悄悄缩放。图像 origin 在左上角，CSS 像素与截图坐标一致。
 `vision-click/click-N/` 保存原截图、标点副本、request/response/decision JSON；动作记录 locator_source=vision、
@@ -483,11 +483,11 @@ uv run python -m test_agent clef-smoke
 可在 `.env` 选择 `VISION_PROVIDER=clef`、`VISION_MODEL=cloudflare/clef`，凭证独立使用 `OPENROUTER_API_KEY`。
 切回 Claude 使用 `VISION_PROVIDER=anthropic`、原有 Claude `VISION_MODEL` 和 `ANTHROPIC_API_KEY`。
 不会替你改 `.env` 或选定生产 provider。GLM 的 Translator/Planner 仍使用 OPENAI_* 设置。
-Clef 不返回坐标；选 Clef 时 vision click 返回 VISION_CONFIG，不会偷偷换模型。
+Clef 不返回坐标；Day 6 将 vision click 明确配置为独立的 Claude provider，阈值仍为 0.90。
 
 Clef 每张图固定问三个 choice：绿色起点城市、红色终点城市、路线 continuous/broken/none/unclear。
 `cases/osm/vision_cities.json` 是全套用例共用的城市候选，不根据当前预期城市裁剪；预期与断言不发送给模型。
-Python 使用**所选选项的 probability**（不是另一个 confidence 指标）与 contract 的 0.90 比较：
+Python 使用**所选选项的 probability**（不是另一个 confidence 指标）与 contract 中当前 provider 的阈值比较（Clef 0.85，Claude 0.90）：
 全部清晰匹配 → SUCCESS/PASSED；任一高概率错误城市（含 other）或断线 → FAILURE/FAILED；其余 → UNCLEAR/BLOCKED。
 actual 和 response.json 保存 choice、全部 probabilities、confidence；reason 列出所选概率。
 直接把需求问成 SUCCESS/FAILURE/UNCLEAR 会引入 anchoring，因此生产只实现 blind A；可选 direct B 没有运行。
@@ -520,3 +520,62 @@ Clef median 791 ms，Claude JPEG 1730 ms；但在 0.90 下，Clef 正确图 PASS
 Clef 每张图 5 次返回的概率向量完全一致。未调低阈值、未改 prompt/label，未自动切换生产 provider。
 完整对照表见 `artifacts/clef-comparison-20261015/report.md`，可复查 `summary.json` 中所有原始报告路径。
 JPEG 没有降低 Claude 的正确图通过率，所以此数据不支持把 Clef 的较低表现归因于压缩；这是小样本结论。
+
+
+## Day 6：provider 阈值、离线 HTML 报告和重复运行
+
+用户已选择 Clef 作为 route-vision provider。**程序没有修改你的 `.env`**；请自行把这两行改为：
+
+```dotenv
+VISION_PROVIDER=clef
+VISION_MODEL=cloudflare/clef
+```
+
+保留 OPENROUTER_API_KEY、ANTHROPIC_API_KEY。VISION_CLICK_MODEL 可单独指定 Claude 点击模型，默认
+claude-haiku-5-5；vision click 始终由 Claude 执行，阈值 0.90。若缺 Anthropic key，会 BLOCKED，不会把 OpenRouter/GLM key 当 Claude key。
+切回 route 的 Claude provider 时，设置 VISION_PROVIDER=anthropic 及对应 Claude VISION_MODEL；route 阈值使用 0.90。
+
+contract 的 vision_checks[].min_confidence 现在支持 `{"clef":0.85,"anthropic":0.90}`，旧的单一数字仍有效。
+当前 provider 必须有条目，缺少时是 contract error，不启动浏览器，不猜默认阈值。
+这次三条计划已通过 revalidate 生成新 VALIDATED 目录，不重新调用 Translator。以后只改 contract 时也可用 revalidate；
+如果 Excel 原文变了，仍需重新翻译。
+
+**校准限制（报告中也自动显示）：**
+Clef threshold 0.85 was chosen after seeing Clef's calibration results (post-hoc), justified by Clef's calibrated probabilities
+being on a different scale than Claude's self-reported confidence; replay showed 0 false PASS and 0 missed PASS on both frozen sets.
+Not confirmed on a new set.
+0.85 是看过数据后选的，不可作为独立新数据验证；前面的 0.90 对照结果保留为历史测量，不改写。
+
+```bash
+# suite 结束后自动生成 report.html；也可只从现有 JSON 重新生成，不调用 API
+uv run python -m test_agent report artifacts/suite-<id>
+uv run python -m test_agent report artifacts/repeat-<id>
+
+# 测量执行重复性：所有 case 必须已有当前有效计划，绝不在中途调用 GLM
+uv run python -m test_agent repeat cases/osm/WBS_testcase1_osm.xlsx --locators cases/osm/locators.json --times 3 --reuse
+```
+
+repeat 总是复用计划（--reuse 可显式写出）；缺计划或计划过期时要求先 translate/revalidate。
+输出 artifacts/repeat-.../repeatability.json 和 report.html，每次 suite 也有自己的 report.html。
+N 次都执行真实浏览器/API，会产生费用；本次已做一次 times=3（9 个 case），无需为检查 HTML 再访问 OSM。
+有任何真实 case FAILED/BLOCKED，退出码为 1；OSM-002 设计 FAILED，所以状态符合设计也会退出 1。
+
+报告可直接在浏览器离线打开，无 JavaScript、外部 CSS、字体或网络图片。缩略图内嵌 JPEG，完整截图、results.json、trace.zip
+使用相对路径链接；单独分享 HTML 仍能看缩略图，完整链接需要保留相关 artifact 目录结构。
+所有 workbook/page/model 文字都转义为文本，不作为 HTML 执行。
+头部显示 UTC 时间（带时区）、workbook、工具版本/Git hash 和 dirty 状态，及实际 provider/model/threshold。
+api_host 是请求的服务域名；upstream_provider 是响应报告的上游名称，upstream_host 未报告时不猜测域名。
+
+Case totals 是**用例最终状态**；另列 Route vision checks，避免 FAIL 用例里的 BLOCKED vision 被隐藏。
+顶部的 What happened 用简单文字解释每条 case；repeat 页面说明运行次数，并链接到每次 suite 报告。
+步骤表直接显示预期和实际结果，原始 JSON 收在默认折叠的 Technical details 里。
+布尔值显示 Yes/No，执行时间保留一位小数；没有 heal 或 vision click 时显示 —。
+若通过的 vision check 有任一所选概率在阈值至阈值 + 0.03（含边界）之间，显示 PASSED (borderline) 和概率。
+这只是显示提醒，不改变 results.json 的状态或阈值。`report` 命令只重建 HTML，不执行测试或调用模型。
+展开每条 case 可看源步骤/预期、动作/断言、定位来源、实际值/概率、截图、cleanup 和 trace。
+Known limitations 自动列出地图模型判断、layer tile 未视觉验证、前置条件只保留原文，以及上面的校准限制。
+
+Repeatability 表的 consistent 只表示各次**case status 相同**，不表示所有证据完全一致。
+probability spread 列出每个问题/每个选项的 min/max、所选概率 min/max、choices，以及上游 provider/host；
+单独列出 step/status/reason 的变化。duration mean/min/max 使用 case execution_seconds，不包含翻译。
+同样截图上的 Clef 概率可重复，但真实页面每次的瓦片加载/画面不同，概率仍可能不同；报告保留变化，不重试求通过。

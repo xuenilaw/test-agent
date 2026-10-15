@@ -1,0 +1,821 @@
+{
+  "provenance": "Frozen Clef A reports at 0.90; every image had five identical answer vectors. No new model calls.",
+  "sets": {
+    "original": {
+      "report": "calibration-20261015T102739525053Z",
+      "images": [
+        {
+          "repetitions": 5,
+          "image": "hamburg-berlin.png",
+          "expected": "PASS",
+          "ideal": "PASSED",
+          "requirement": {
+            "origin": "Hamburg",
+            "destination": "Berlin"
+          },
+          "status": "BLOCKED",
+          "code": "VISION_INCONCLUSIVE",
+          "observation": {
+            "answers": {
+              "start_city": {
+                "type": "choice",
+                "choice": "Hamburg",
+                "probabilities": {
+                  "Hamburg": 0.9082,
+                  "Berlin": 0.0075,
+                  "München": 0.0043,
+                  "Potsdam": 0.0058,
+                  "Bremen": 0.0151,
+                  "Leipzig": 0.0081,
+                  "Rostock": 0.0043,
+                  "Bernau": 0.0057,
+                  "other": 0.0128,
+                  "unclear": 0.0282
+                },
+                "confidence": 0.8069
+              },
+              "end_city": {
+                "type": "choice",
+                "choice": "Berlin",
+                "probabilities": {
+                  "Hamburg": 0.022,
+                  "Berlin": 0.8582,
+                  "München": 0.0062,
+                  "Potsdam": 0.0087,
+                  "Bremen": 0.0066,
+                  "Leipzig": 0.014,
+                  "Rostock": 0.0054,
+                  "Bernau": 0.018,
+                  "other": 0.0207,
+                  "unclear": 0.0402
+                },
+                "confidence": 0.7109
+              },
+              "route_line": {
+                "type": "choice",
+                "choice": "continuous",
+                "probabilities": {
+                  "continuous": 0.9567,
+                  "broken": 0.0192,
+                  "none": 0.0093,
+                  "unclear": 0.0148
+                },
+                "confidence": 0.888
+              }
+            }
+          },
+          "observation_schema": "clef-blind-v1"
+        },
+        {
+          "repetitions": 5,
+          "image": "hamburg-munich.png",
+          "expected": "NOT_PASS",
+          "ideal": "FAILED",
+          "requirement": {
+            "origin": "Hamburg",
+            "destination": "Berlin"
+          },
+          "status": "BLOCKED",
+          "code": "VISION_INCONCLUSIVE",
+          "observation": {
+            "answers": {
+              "start_city": {
+                "type": "choice",
+                "choice": "Hamburg",
+                "probabilities": {
+                  "Hamburg": 0.5791,
+                  "Berlin": 0.0122,
+                  "München": 0.0274,
+                  "Potsdam": 0.0081,
+                  "Bremen": 0.0422,
+                  "Leipzig": 0.0094,
+                  "Rostock": 0.1166,
+                  "Bernau": 0.0098,
+                  "other": 0.0795,
+                  "unclear": 0.1157
+                },
+                "confidence": 0.3018
+              },
+              "end_city": {
+                "type": "choice",
+                "choice": "München",
+                "probabilities": {
+                  "Hamburg": 0.0311,
+                  "Berlin": 0.0079,
+                  "München": 0.6757,
+                  "Potsdam": 0.0099,
+                  "Bremen": 0.0082,
+                  "Leipzig": 0.0125,
+                  "Rostock": 0.035,
+                  "Bernau": 0.0145,
+                  "other": 0.0824,
+                  "unclear": 0.1228
+                },
+                "confidence": 0.4237
+              },
+              "route_line": {
+                "type": "choice",
+                "choice": "continuous",
+                "probabilities": {
+                  "continuous": 0.7602,
+                  "broken": 0.1113,
+                  "none": 0.0656,
+                  "unclear": 0.0629
+                },
+                "confidence": 0.4647
+              }
+            }
+          },
+          "observation_schema": "clef-blind-v1"
+        },
+        {
+          "repetitions": 5,
+          "image": "hamburg-potsdam.png",
+          "expected": "NOT_PASS",
+          "ideal": "BLOCKED",
+          "requirement": {
+            "origin": "Hamburg",
+            "destination": "Berlin"
+          },
+          "status": "BLOCKED",
+          "code": "VISION_INCONCLUSIVE",
+          "observation": {
+            "answers": {
+              "start_city": {
+                "type": "choice",
+                "choice": "Hamburg",
+                "probabilities": {
+                  "Hamburg": 0.9183,
+                  "Berlin": 0.009,
+                  "München": 0.0042,
+                  "Potsdam": 0.0072,
+                  "Bremen": 0.0047,
+                  "Leipzig": 0.0044,
+                  "Rostock": 0.012,
+                  "Bernau": 0.0054,
+                  "other": 0.0135,
+                  "unclear": 0.0213
+                },
+                "confidence": 0.827
+              },
+              "end_city": {
+                "type": "choice",
+                "choice": "Berlin",
+                "probabilities": {
+                  "Hamburg": 0.041,
+                  "Berlin": 0.3497,
+                  "München": 0.0183,
+                  "Potsdam": 0.1524,
+                  "Bremen": 0.017,
+                  "Leipzig": 0.0167,
+                  "Rostock": 0.0383,
+                  "Bernau": 0.1035,
+                  "other": 0.1002,
+                  "unclear": 0.1629
+                },
+                "confidence": 0.1076
+              },
+              "route_line": {
+                "type": "choice",
+                "choice": "continuous",
+                "probabilities": {
+                  "continuous": 0.9581,
+                  "broken": 0.0157,
+                  "none": 0.0093,
+                  "unclear": 0.0169
+                },
+                "confidence": 0.8914
+              }
+            }
+          },
+          "observation_schema": "clef-blind-v1"
+        },
+        {
+          "repetitions": 5,
+          "image": "berlin-hamburg.png",
+          "expected": "NOT_PASS",
+          "ideal": "FAILED",
+          "requirement": {
+            "origin": "Hamburg",
+            "destination": "Berlin"
+          },
+          "status": "FAILED",
+          "code": null,
+          "observation": {
+            "answers": {
+              "start_city": {
+                "type": "choice",
+                "choice": "Berlin",
+                "probabilities": {
+                  "Hamburg": 0.0092,
+                  "Berlin": 0.9119,
+                  "München": 0.0049,
+                  "Potsdam": 0.008,
+                  "Bremen": 0.006,
+                  "Leipzig": 0.0044,
+                  "Rostock": 0.004,
+                  "Bernau": 0.0164,
+                  "other": 0.0111,
+                  "unclear": 0.0241
+                },
+                "confidence": 0.8142
+              },
+              "end_city": {
+                "type": "choice",
+                "choice": "Hamburg",
+                "probabilities": {
+                  "Hamburg": 0.9009,
+                  "Berlin": 0.0131,
+                  "München": 0.0074,
+                  "Potsdam": 0.0076,
+                  "Bremen": 0.009,
+                  "Leipzig": 0.0064,
+                  "Rostock": 0.0121,
+                  "Bernau": 0.0079,
+                  "other": 0.0122,
+                  "unclear": 0.0234
+                },
+                "confidence": 0.7921
+              },
+              "route_line": {
+                "type": "choice",
+                "choice": "continuous",
+                "probabilities": {
+                  "continuous": 0.9494,
+                  "broken": 0.0184,
+                  "none": 0.01,
+                  "unclear": 0.0222
+                },
+                "confidence": 0.8699
+              }
+            }
+          },
+          "observation_schema": "clef-blind-v1"
+        },
+        {
+          "repetitions": 5,
+          "image": "bremen-berlin.png",
+          "expected": "NOT_PASS",
+          "ideal": "FAILED",
+          "requirement": {
+            "origin": "Hamburg",
+            "destination": "Berlin"
+          },
+          "status": "BLOCKED",
+          "code": "VISION_INCONCLUSIVE",
+          "observation": {
+            "answers": {
+              "start_city": {
+                "type": "choice",
+                "choice": "Bremen",
+                "probabilities": {
+                  "Hamburg": 0.0304,
+                  "Berlin": 0.0158,
+                  "München": 0.0053,
+                  "Potsdam": 0.0042,
+                  "Bremen": 0.8171,
+                  "Leipzig": 0.0065,
+                  "Rostock": 0.0076,
+                  "Bernau": 0.025,
+                  "other": 0.0268,
+                  "unclear": 0.0613
+                },
+                "confidence": 0.6378
+              },
+              "end_city": {
+                "type": "choice",
+                "choice": "Berlin",
+                "probabilities": {
+                  "Hamburg": 0.0137,
+                  "Berlin": 0.8165,
+                  "München": 0.0074,
+                  "Potsdam": 0.0127,
+                  "Bremen": 0.0404,
+                  "Leipzig": 0.0178,
+                  "Rostock": 0.0087,
+                  "Bernau": 0.0193,
+                  "other": 0.0247,
+                  "unclear": 0.0388
+                },
+                "confidence": 0.6352
+              },
+              "route_line": {
+                "type": "choice",
+                "choice": "continuous",
+                "probabilities": {
+                  "continuous": 0.9519,
+                  "broken": 0.0207,
+                  "none": 0.0111,
+                  "unclear": 0.0163
+                },
+                "confidence": 0.876
+              }
+            }
+          },
+          "observation_schema": "clef-blind-v1"
+        },
+        {
+          "repetitions": 5,
+          "image": "hamburg-berlin-viewport.png",
+          "expected": "PASS",
+          "ideal": "PASSED",
+          "requirement": {
+            "origin": "Hamburg",
+            "destination": "Berlin"
+          },
+          "status": "BLOCKED",
+          "code": "VISION_INCONCLUSIVE",
+          "observation": {
+            "answers": {
+              "start_city": {
+                "type": "choice",
+                "choice": "Hamburg",
+                "probabilities": {
+                  "Hamburg": 0.8997,
+                  "Berlin": 0.0133,
+                  "München": 0.0059,
+                  "Potsdam": 0.0056,
+                  "Bremen": 0.0101,
+                  "Leipzig": 0.0053,
+                  "Rostock": 0.0056,
+                  "Bernau": 0.0074,
+                  "other": 0.0197,
+                  "unclear": 0.0274
+                },
+                "confidence": 0.7901
+              },
+              "end_city": {
+                "type": "choice",
+                "choice": "Berlin",
+                "probabilities": {
+                  "Hamburg": 0.0116,
+                  "Berlin": 0.8564,
+                  "München": 0.0057,
+                  "Potsdam": 0.0109,
+                  "Bremen": 0.0075,
+                  "Leipzig": 0.0062,
+                  "Rostock": 0.0057,
+                  "Bernau": 0.0332,
+                  "other": 0.0154,
+                  "unclear": 0.0474
+                },
+                "confidence": 0.7083
+              },
+              "route_line": {
+                "type": "choice",
+                "choice": "continuous",
+                "probabilities": {
+                  "continuous": 0.9489,
+                  "broken": 0.0205,
+                  "none": 0.0117,
+                  "unclear": 0.0189
+                },
+                "confidence": 0.8685
+              }
+            }
+          },
+          "observation_schema": "clef-blind-v1"
+        },
+        {
+          "repetitions": 5,
+          "image": "no-route.png",
+          "expected": "NOT_PASS",
+          "ideal": "BLOCKED",
+          "requirement": {
+            "origin": "Hamburg",
+            "destination": "Berlin"
+          },
+          "status": "BLOCKED",
+          "code": "VISION_INCONCLUSIVE",
+          "observation": {
+            "answers": {
+              "start_city": {
+                "type": "choice",
+                "choice": "unclear",
+                "probabilities": {
+                  "Hamburg": 0.0825,
+                  "Berlin": 0.1878,
+                  "München": 0.0627,
+                  "Potsdam": 0.0383,
+                  "Bremen": 0.1401,
+                  "Leipzig": 0.062,
+                  "Rostock": 0.0236,
+                  "Bernau": 0.0572,
+                  "other": 0.0614,
+                  "unclear": 0.2844
+                },
+                "confidence": 0.066
+              },
+              "end_city": {
+                "type": "choice",
+                "choice": "unclear",
+                "probabilities": {
+                  "Hamburg": 0.0727,
+                  "Berlin": 0.1102,
+                  "München": 0.1107,
+                  "Potsdam": 0.0401,
+                  "Bremen": 0.0854,
+                  "Leipzig": 0.1032,
+                  "Rostock": 0.0264,
+                  "Bernau": 0.0405,
+                  "other": 0.0897,
+                  "unclear": 0.3211
+                },
+                "confidence": 0.0697
+              },
+              "route_line": {
+                "type": "choice",
+                "choice": "none",
+                "probabilities": {
+                  "continuous": 0.0362,
+                  "broken": 0.0273,
+                  "none": 0.839,
+                  "unclear": 0.0975
+                },
+                "confidence": 0.6206
+              }
+            }
+          },
+          "observation_schema": "clef-blind-v1"
+        },
+        {
+          "repetitions": 5,
+          "image": "tiles-blank.png",
+          "expected": "NOT_PASS",
+          "ideal": "BLOCKED",
+          "requirement": {
+            "origin": "Hamburg",
+            "destination": "Berlin"
+          },
+          "status": "BLOCKED",
+          "code": "VISION_INCONCLUSIVE",
+          "observation": {
+            "answers": {
+              "start_city": {
+                "type": "choice",
+                "choice": "unclear",
+                "probabilities": {
+                  "Hamburg": 0.0139,
+                  "Berlin": 0.0135,
+                  "München": 0.0141,
+                  "Potsdam": 0.0102,
+                  "Bremen": 0.0138,
+                  "Leipzig": 0.0097,
+                  "Rostock": 0.0074,
+                  "Bernau": 0.0133,
+                  "other": 0.0217,
+                  "unclear": 0.8824
+                },
+                "confidence": 0.7559
+              },
+              "end_city": {
+                "type": "choice",
+                "choice": "unclear",
+                "probabilities": {
+                  "Hamburg": 0.0228,
+                  "Berlin": 0.0119,
+                  "München": 0.0196,
+                  "Potsdam": 0.0162,
+                  "Bremen": 0.0156,
+                  "Leipzig": 0.0221,
+                  "Rostock": 0.0121,
+                  "Bernau": 0.0105,
+                  "other": 0.0217,
+                  "unclear": 0.8475
+                },
+                "confidence": 0.6899
+              },
+              "route_line": {
+                "type": "choice",
+                "choice": "none",
+                "probabilities": {
+                  "continuous": 0.0101,
+                  "broken": 0.0084,
+                  "none": 0.886,
+                  "unclear": 0.0955
+                },
+                "confidence": 0.7258
+              }
+            }
+          },
+          "observation_schema": "clef-blind-v1"
+        }
+      ]
+    },
+    "holdout": {
+      "report": "calibration-20261015T102816257831Z",
+      "images": [
+        {
+          "repetitions": 5,
+          "image": "hamburg-leipzig.png",
+          "expected": "NOT_PASS",
+          "ideal": "FAILED",
+          "requirement": {
+            "origin": "Hamburg",
+            "destination": "Berlin"
+          },
+          "status": "FAILED",
+          "code": null,
+          "observation": {
+            "answers": {
+              "start_city": {
+                "type": "choice",
+                "choice": "Hamburg",
+                "probabilities": {
+                  "Hamburg": 0.8945,
+                  "Berlin": 0.0052,
+                  "München": 0.0046,
+                  "Potsdam": 0.0044,
+                  "Bremen": 0.0102,
+                  "Leipzig": 0.0204,
+                  "Rostock": 0.0066,
+                  "Bernau": 0.0038,
+                  "other": 0.0211,
+                  "unclear": 0.0292
+                },
+                "confidence": 0.7802
+              },
+              "end_city": {
+                "type": "choice",
+                "choice": "Leipzig",
+                "probabilities": {
+                  "Hamburg": 0.0107,
+                  "Berlin": 0.0048,
+                  "München": 0.0067,
+                  "Potsdam": 0.0058,
+                  "Bremen": 0.0056,
+                  "Leipzig": 0.9148,
+                  "Rostock": 0.006,
+                  "Bernau": 0.0033,
+                  "other": 0.0153,
+                  "unclear": 0.027
+                },
+                "confidence": 0.8202
+              },
+              "route_line": {
+                "type": "choice",
+                "choice": "continuous",
+                "probabilities": {
+                  "continuous": 0.97,
+                  "broken": 0.0131,
+                  "none": 0.0064,
+                  "unclear": 0.0105
+                },
+                "confidence": 0.9215
+              }
+            }
+          },
+          "observation_schema": "clef-blind-v1"
+        },
+        {
+          "repetitions": 5,
+          "image": "rostock-berlin.png",
+          "expected": "NOT_PASS",
+          "ideal": "FAILED",
+          "requirement": {
+            "origin": "Hamburg",
+            "destination": "Berlin"
+          },
+          "status": "BLOCKED",
+          "code": "VISION_INCONCLUSIVE",
+          "observation": {
+            "answers": {
+              "start_city": {
+                "type": "choice",
+                "choice": "Rostock",
+                "probabilities": {
+                  "Hamburg": 0.0068,
+                  "Berlin": 0.0069,
+                  "München": 0.0033,
+                  "Potsdam": 0.004,
+                  "Bremen": 0.0036,
+                  "Leipzig": 0.003,
+                  "Rostock": 0.8735,
+                  "Bernau": 0.0079,
+                  "other": 0.0383,
+                  "unclear": 0.0527
+                },
+                "confidence": 0.7416
+              },
+              "end_city": {
+                "type": "choice",
+                "choice": "Berlin",
+                "probabilities": {
+                  "Hamburg": 0.0087,
+                  "Berlin": 0.716,
+                  "München": 0.0064,
+                  "Potsdam": 0.0103,
+                  "Bremen": 0.0062,
+                  "Leipzig": 0.0076,
+                  "Rostock": 0.1548,
+                  "Bernau": 0.0301,
+                  "other": 0.0244,
+                  "unclear": 0.0355
+                },
+                "confidence": 0.4886
+              },
+              "route_line": {
+                "type": "choice",
+                "choice": "continuous",
+                "probabilities": {
+                  "continuous": 0.9435,
+                  "broken": 0.0244,
+                  "none": 0.0134,
+                  "unclear": 0.0187
+                },
+                "confidence": 0.8551
+              }
+            }
+          },
+          "observation_schema": "clef-blind-v1"
+        },
+        {
+          "repetitions": 5,
+          "image": "berlin-hamburg-wide.png",
+          "expected": "NOT_PASS",
+          "ideal": "FAILED",
+          "requirement": {
+            "origin": "Hamburg",
+            "destination": "Berlin"
+          },
+          "status": "FAILED",
+          "code": null,
+          "observation": {
+            "answers": {
+              "start_city": {
+                "type": "choice",
+                "choice": "Berlin",
+                "probabilities": {
+                  "Hamburg": 0.0095,
+                  "Berlin": 0.9066,
+                  "München": 0.0047,
+                  "Potsdam": 0.0073,
+                  "Bremen": 0.0055,
+                  "Leipzig": 0.0044,
+                  "Rostock": 0.0056,
+                  "Bernau": 0.0159,
+                  "other": 0.0135,
+                  "unclear": 0.027
+                },
+                "confidence": 0.8036
+              },
+              "end_city": {
+                "type": "choice",
+                "choice": "Hamburg",
+                "probabilities": {
+                  "Hamburg": 0.8437,
+                  "Berlin": 0.019,
+                  "München": 0.0105,
+                  "Potsdam": 0.0098,
+                  "Bremen": 0.0123,
+                  "Leipzig": 0.0083,
+                  "Rostock": 0.0226,
+                  "Bernau": 0.0151,
+                  "other": 0.019,
+                  "unclear": 0.0397
+                },
+                "confidence": 0.6837
+              },
+              "route_line": {
+                "type": "choice",
+                "choice": "continuous",
+                "probabilities": {
+                  "continuous": 0.9579,
+                  "broken": 0.015,
+                  "none": 0.0091,
+                  "unclear": 0.018
+                },
+                "confidence": 0.8909
+              }
+            }
+          },
+          "observation_schema": "clef-blind-v1"
+        },
+        {
+          "repetitions": 5,
+          "image": "hamburg-berlin-wide.png",
+          "expected": "PASS",
+          "ideal": "PASSED",
+          "requirement": {
+            "origin": "Hamburg",
+            "destination": "Berlin"
+          },
+          "status": "BLOCKED",
+          "code": "VISION_INCONCLUSIVE",
+          "observation": {
+            "answers": {
+              "start_city": {
+                "type": "choice",
+                "choice": "Hamburg",
+                "probabilities": {
+                  "Hamburg": 0.9254,
+                  "Berlin": 0.0147,
+                  "München": 0.0039,
+                  "Potsdam": 0.0037,
+                  "Bremen": 0.0054,
+                  "Leipzig": 0.0037,
+                  "Rostock": 0.0071,
+                  "Bernau": 0.0055,
+                  "other": 0.012,
+                  "unclear": 0.0186
+                },
+                "confidence": 0.8414
+              },
+              "end_city": {
+                "type": "choice",
+                "choice": "Berlin",
+                "probabilities": {
+                  "Hamburg": 0.0138,
+                  "Berlin": 0.8983,
+                  "München": 0.005,
+                  "Potsdam": 0.0095,
+                  "Bremen": 0.0059,
+                  "Leipzig": 0.0051,
+                  "Rostock": 0.0067,
+                  "Bernau": 0.0168,
+                  "other": 0.0122,
+                  "unclear": 0.0267
+                },
+                "confidence": 0.7872
+              },
+              "route_line": {
+                "type": "choice",
+                "choice": "continuous",
+                "probabilities": {
+                  "continuous": 0.9487,
+                  "broken": 0.0219,
+                  "none": 0.009,
+                  "unclear": 0.0204
+                },
+                "confidence": 0.868
+              }
+            }
+          },
+          "observation_schema": "clef-blind-v1"
+        },
+        {
+          "repetitions": 5,
+          "image": "hamburg-bernau.png",
+          "expected": "NOT_PASS",
+          "ideal": "BLOCKED",
+          "requirement": {
+            "origin": "Hamburg",
+            "destination": "Berlin"
+          },
+          "status": "BLOCKED",
+          "code": "VISION_INCONCLUSIVE",
+          "observation": {
+            "answers": {
+              "start_city": {
+                "type": "choice",
+                "choice": "Hamburg",
+                "probabilities": {
+                  "Hamburg": 0.8996,
+                  "Berlin": 0.0086,
+                  "München": 0.0042,
+                  "Potsdam": 0.0073,
+                  "Bremen": 0.0093,
+                  "Leipzig": 0.0053,
+                  "Rostock": 0.0039,
+                  "Bernau": 0.0112,
+                  "other": 0.0147,
+                  "unclear": 0.0359
+                },
+                "confidence": 0.7903
+              },
+              "end_city": {
+                "type": "choice",
+                "choice": "Berlin",
+                "probabilities": {
+                  "Hamburg": 0.0301,
+                  "Berlin": 0.3782,
+                  "München": 0.0091,
+                  "Potsdam": 0.0336,
+                  "Bremen": 0.0093,
+                  "Leipzig": 0.0152,
+                  "Rostock": 0.0083,
+                  "Bernau": 0.2722,
+                  "other": 0.1167,
+                  "unclear": 0.1273
+                },
+                "confidence": 0.166
+              },
+              "route_line": {
+                "type": "choice",
+                "choice": "continuous",
+                "probabilities": {
+                  "continuous": 0.9499,
+                  "broken": 0.021,
+                  "none": 0.0102,
+                  "unclear": 0.0189
+                },
+                "confidence": 0.8709
+              }
+            }
+          },
+          "observation_schema": "clef-blind-v1"
+        }
+      ]
+    }
+  }
+}

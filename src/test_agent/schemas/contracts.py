@@ -2,18 +2,37 @@
 
 from typing import Annotated, Literal
 
-from pydantic import Field, StringConstraints, TypeAdapter
+from pydantic import Field, StringConstraints, TypeAdapter, model_validator
 
 from test_agent.schemas.plan import StrictModel
 
 NonblankText = Annotated[str, StringConstraints(min_length=1, pattern=r"\S")]
+Confidence = Annotated[float, Field(gt=0.5, le=1)]
 
 
 class VisionCheck(StrictModel):
     step: int = Field(ge=1)
     kind: Literal["route_geometry"]
     requirement: NonblankText
-    min_confidence: float = Field(gt=0.5, le=1)
+    min_confidence: Confidence | dict[NonblankText, Confidence]
+
+    @model_validator(mode='after')
+    def thresholds(self):
+        if isinstance(self.min_confidence,dict) and not self.min_confidence:
+            raise ValueError('Per-provider thresholds cannot be empty')
+        return self
+
+
+def threshold_for(definition, provider):
+    """No implicit provider fallback; legacy numeric contracts remain valid."""
+    value=definition['min_confidence']
+    if isinstance(value,dict):
+        if provider not in value:
+            raise ValueError(f'Contract has no min_confidence for provider {provider}')
+        value=value[provider]
+    if type(value) not in (int,float) or not .5 < value <= 1:
+        raise ValueError('Contract min_confidence must be >0.5 and <=1')
+    return float(value)
 
 
 class RouteContract(StrictModel):

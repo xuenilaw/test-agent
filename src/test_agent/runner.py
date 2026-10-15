@@ -12,6 +12,7 @@ from test_agent.tools.dom import Blocked, perform, capture_map
 from test_agent.tools.healing import HealingResolver
 from test_agent.verification.checks import verify
 from test_agent.faults import validate_fault_targets, applicable_faults, intercept_fault, outcomes_as_designed
+from test_agent.schemas.contracts import threshold_for
 
 
 async def run_case(folder: Path, locators: Path, project_root: Path, *, headed=False,
@@ -30,6 +31,8 @@ async def run_case(folder: Path, locators: Path, project_root: Path, *, headed=F
             vision_provider = provider_from_env()
         except VisionError as exc:
             vision_provider = UnavailableVision(exc)
+    active_provider=getattr(vision_provider,'provider_name',None) or os.getenv('VISION_PROVIDER','clef')
+    declared=[{**v,'min_confidence':threshold_for(v,active_provider),'provider':active_provider} for v in declared]
     local_browsers = project_root / ".browsers"
     if local_browsers.exists():
         os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(local_browsers))
@@ -59,11 +62,11 @@ async def run_case(folder: Path, locators: Path, project_root: Path, *, headed=F
         if skip_vision:
             from test_agent.verification.vision_providers import VisionError
             raise VisionError('SKIPPED')
-        if vision_provider is not None:
+        if vision_provider is not None and getattr(vision_provider,'provider_name',None)!='clef':
             return vision_provider
-        from test_agent.verification.vision_providers import provider_from_env
+        from test_agent.verification.vision_providers import click_provider_from_env
         load_dotenv(project_root/'.env')
-        return provider_from_env()
+        return click_provider_from_env()
     from test_agent.verification.vision_click import VisionClickFallback
     click_fallback = VisionClickFallback(resolver,original_specs,click_provider,output/'vision-click')
     resolver.click_fallback = click_fallback

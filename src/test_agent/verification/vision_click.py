@@ -58,9 +58,11 @@ class VisionClickFallback:
                 raise VisionError('CONFIG', fields=['1280x800_viewport'])
             request['sha256'] = hashlib.sha256(image).hexdigest()
             provider = self.provider_factory()
+            event.update(provider=getattr(provider,'provider_name',None),model=getattr(provider,'model',None))
             if not callable(getattr(provider, 'locate_click', None)):
                 raise VisionError('CONFIG', fields=['coordinate_capable_provider'])
             reply = await provider.locate_click(image, self.resolver.targets[target])
+            event.update({k:reply[k] for k in ('provider','model','api_host','upstream_host','upstream_provider') if k in reply})
             observation = ClickObservation.model_validate_json(reply.get('content', ''))
             event.update(observation.model_dump())
             if not 0 <= observation.x < 1280 or not 0 <= observation.y < 800:

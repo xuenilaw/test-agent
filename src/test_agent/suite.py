@@ -1,6 +1,7 @@
 """Outer case loop: one case failure never hides later cases."""
 import argparse
 import json
+import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,6 +10,7 @@ from test_agent.plan_loader import load_plan
 from test_agent.runner import run_case
 from test_agent.schemas.contracts import parse_contract
 from test_agent.faults import validate_fault_names, validate_fault_targets, applicable_faults, FaultInputError
+from test_agent.reporting import build_report,tool_metadata
 
 
 def reusable_plan(root: Path, workbook: Path, case_id: str, url: str):
@@ -31,7 +33,7 @@ def reusable_plan(root: Path, workbook: Path, case_id: str, url: str):
 
 
 async def run_suite(workbook: Path, locators: Path, project_root: Path, *, reuse=False,
-                    skip_vision=False, headed=False, output_root=None, url='https://www.openstreetmap.org/', faults=None):
+                    skip_vision=False, headed=False, output_root=None, url='https://www.openstreetmap.org/', faults=None,require_reuse=False,plan_root=None):
     from test_agent.cli import run_translation
     faults = list(dict.fromkeys(faults or []))
     validate_fault_names(faults)
@@ -39,7 +41,11 @@ async def run_suite(workbook: Path, locators: Path, project_root: Path, *, reuse
     stamp=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
     artifact_root=output_root or project_root/'artifacts'
     output=artifact_root/('suite-'+stamp); output.mkdir(parents=True)
-    summary=dict(workbook=str(workbook.resolve()),output_directory=str(output.resolve()),cases=[],status='BLOCKED',reason=None,faults_injected=faults)
+    from dotenv import load_dotenv
+    load_dotenv(project_root/'.env')
+    summary=dict(workbook=str(workbook.resolve()),output_directory=str(output.resolve()),cases=[],status='BLOCKED',reason=None,faults_injected=faults,
+        started_at=datetime.now(timezone.utc).isoformat(),tool=tool_metadata(project_root),
+        vision_configuration=dict(provider=os.getenv('VISION_PROVIDER','clef'),model=os.getenv('VISION_MODEL'),executed=False))
     async def execute(entry,folder,selected_faults):
         case_id=entry['case_id']
         print(f"{case_id}: running"+(' (reused plan)' if entry['reused'] else '')+'...',flush=True)
@@ -73,9 +79,11 @@ async def run_suite(workbook: Path, locators: Path, project_root: Path, *, reuse
             try:
                 contract=parse_contract(contracts[case_id]).model_dump() if case_id in contracts else None
                 entry['designed_outcome']=(contract or {}).get('designed_outcome')
-                folder=reusable_plan(artifact_root,workbook,case_id,url) if reuse else None
+                folder=reusable_plan(plan_root or artifact_root,workbook,case_id,url) if reuse else None
                 entry['reused']=folder is not None
                 if folder is None:
+                    if require_reuse:
+                        raise ValueError('repeat plan missing or stale for '+case_id)
                     print(f'{case_id}: translating...',flush=True)
                     report={}; started=time.perf_counter()
                     args=argparse.Namespace(project_dir=project_root,workbook=workbook,case=case_id,
@@ -119,6 +127,7 @@ async def run_suite(workbook: Path, locators: Path, project_root: Path, *, reuse
     for key in ['vision_click_attempts','vision_click_successes']:
         summary['totals'][key]=sum(c.get(key,0) for c in summary['cases'])
     (output/'summary.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2))
+    build_report(output)
     return summary
 
 

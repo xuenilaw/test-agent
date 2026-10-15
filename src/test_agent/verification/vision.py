@@ -8,6 +8,7 @@ from typing import Annotated, Literal
 from pydantic import Field, ValidationError, model_validator
 from test_agent.schemas.plan import StrictModel
 from test_agent.schemas.results import CheckResult
+from test_agent.schemas.contracts import threshold_for
 from test_agent.verification.vision_providers import (
     GLMVision, ClaudeVision, VisionError, VisionProvider, provider_from_env,
 )
@@ -148,7 +149,8 @@ async def verify_route_image(image_path: Path, contract: dict, provider: VisionP
                              evidence_dir: Path, *, definition: dict,
                              full_image_path: str | None = None, skip=False,
                              capture_error: VisionError | None = None, image_metadata=None) -> CheckResult:
-    threshold = definition["min_confidence"]  # Required human-owned value, no default.
+    provider_name=getattr(provider,'provider_name',None) or definition.get('provider')
+    threshold = threshold_for(definition,provider_name)
     requirement = {"origin": contract["origin"], "destination": contract["destination"],
                    "description": definition["requirement"],
                    "origin_aliases": contract.get("origin_aliases", []),
@@ -156,6 +158,7 @@ async def verify_route_image(image_path: Path, contract: dict, provider: VisionP
     record = CheckResult(kind=definition["kind"], target="vision map", expected=requirement,
                          status="BLOCKED")
     record.actual = {"screenshot": str(image_path.resolve()), "full_screenshot": full_image_path,
+                     "provider":provider_name,"model":getattr(provider,'model',None),
                      "min_confidence": threshold, "observation_schema": "blind-map-v2", "route_geometry_verified": False}
     evidence_dir.mkdir(parents=True, exist_ok=True)
     reply = {"latency_ms": 0, "usage": {}, "http_status": None, "block_types": []}
@@ -191,7 +194,7 @@ async def verify_route_image(image_path: Path, contract: dict, provider: VisionP
         if schema not in {'clef-blind-v1','blind-map-v2'}:
             raise VisionError('SCHEMA',fields=['observation_schema'])
         record.actual['observation_schema']=schema
-        record.actual.update({k: reply[k] for k in ("provider", "model", "latency_ms", "usage") if k in reply})
+        record.actual.update({k: reply[k] for k in ("provider", "model", "latency_ms", "usage","api_host","upstream_host","upstream_provider") if k in reply})
         raw = reply.get("content")
         try:
             data = json.loads(raw) if isinstance(raw, str) else None
@@ -203,7 +206,7 @@ async def verify_route_image(image_path: Path, contract: dict, provider: VisionP
             names = sorted({str(e["loc"][0]) if e["loc"] and e["loc"][0] in VisualObservation.model_fields
                             else "observation" for e in exc.errors()})
             raise VisionError("SCHEMA", fields=names) from None
-        record.actual.update({k: reply[k] for k in ("provider", "model", "latency_ms", "usage") if k in reply})
+        record.actual.update({k: reply[k] for k in ("provider", "model", "latency_ms", "usage","api_host","upstream_host","upstream_provider") if k in reply})
         if isinstance(observation,ClefObservation):
             record.actual.update(answers=observation.answers,observation=observation.model_dump())
         else:
