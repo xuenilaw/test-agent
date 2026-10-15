@@ -3,7 +3,7 @@ name = "test-agent"
 version = "0.1.0"
 description = "Learn Playwright first, then expose browser tools to an agent."
 requires-python = ">=3.11"
-dependencies = ["playwright", "openai-agents", "python-dotenv", "openpyxl", "pydantic"]
+dependencies = ["playwright", "openai-agents", "python-dotenv", "openpyxl", "pydantic", "pillow"]
 
 [build-system]
 requires = ["hatchling"]

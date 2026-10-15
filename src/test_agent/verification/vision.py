@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, model_validator
 from test_agent.schemas.plan import StrictModel
 from test_agent.schemas.results import CheckResult
 from test_agent.verification.vision_providers import (
@@ -22,6 +22,49 @@ class VisualObservation(StrictModel):
     confidence: Annotated[float, Field(ge=0, le=1)]
     summary: Annotated[str, Field(min_length=1, max_length=200, pattern=r"\S")]
     evidence: Annotated[str, Field(min_length=1, pattern=r"\S")]
+
+
+class ClefObservation(StrictModel):
+    answers: dict
+
+    @model_validator(mode='after')
+    def validate_answers(self):
+        from test_agent.verification.clef import blind_questions,choice_answer,load_cities
+        questions=blind_questions(load_cities())
+        if set(self.answers)!=set(questions):
+            raise ValueError('Clef questions missing')
+        self.answers={name:choice_answer(self.answers[name],q['criteria']) for name,q in questions.items()}
+        return self
+
+    @property
+    def confidence(self):
+        return min(a['probabilities'][a['choice']] for a in self.answers.values())
+
+
+def decide_clef(observation,requirement,threshold):
+    answers=observation.answers
+    confident_differences=[]
+    unclear=[]
+    pieces=[]
+    for key,endpoint in [('start_city','origin'),('end_city','destination')]:
+        answer=answers[key];choice=answer['choice'];p=answer['probabilities'][choice]
+        pieces.append(f'{key} {choice} {p:.4f}')
+        if choice=='unclear' or p<threshold:
+            unclear.append(key)
+        elif not endpoint_matches(choice,requirement[endpoint],requirement.get(endpoint+'_aliases',[])):
+            confident_differences.append(key)
+    line=answers['route_line'];choice=line['choice'];p=line['probabilities'][choice]
+    pieces.append(f'line {choice} {p:.4f}')
+    if choice=='broken' and p>=threshold:
+        confident_differences.append('broken line')
+    elif choice!='continuous' or p<threshold:
+        unclear.append('line')
+    summary=', '.join(pieces)+f' (min {threshold:.2f})'
+    if confident_differences:
+        return 'FAILED','Clef FAILURE: '+summary,None
+    if unclear:
+        return 'BLOCKED','Clef UNCLEAR: '+summary,'VISION_INCONCLUSIVE'
+    return 'PASSED','Clef SUCCESS: '+summary,None
 
 
 INSTRUCTIONS = """Observe only the supplied map image. You are not judging a test requirement.
@@ -70,6 +113,8 @@ def decide(observation: VisualObservation, requirement: dict, min_confidence: fl
     threshold = min_confidence
     if not 0.5 < threshold <= 1:
         raise VisionError("CONFIG", fields=["min_confidence"])
+    if isinstance(observation,ClefObservation):
+        return decide_clef(observation,requirement,threshold)
     confidence, summary = observation.confidence, one_line(observation.summary)
     unclear = []
     if confidence < threshold:
@@ -102,7 +147,7 @@ def decide(observation: VisualObservation, requirement: dict, min_confidence: fl
 async def verify_route_image(image_path: Path, contract: dict, provider: VisionProvider | None,
                              evidence_dir: Path, *, definition: dict,
                              full_image_path: str | None = None, skip=False,
-                             capture_error: VisionError | None = None) -> CheckResult:
+                             capture_error: VisionError | None = None, image_metadata=None) -> CheckResult:
     threshold = definition["min_confidence"]  # Required human-owned value, no default.
     requirement = {"origin": contract["origin"], "destination": contract["destination"],
                    "description": definition["requirement"],
@@ -114,6 +159,9 @@ async def verify_route_image(image_path: Path, contract: dict, provider: VisionP
                      "min_confidence": threshold, "observation_schema": "blind-map-v2", "route_geometry_verified": False}
     evidence_dir.mkdir(parents=True, exist_ok=True)
     reply = {"latency_ms": 0, "usage": {}, "http_status": None, "block_types": []}
+    record.actual['observation_schema']=getattr(provider,'observation_schema','blind-map-v2')
+    if callable(getattr(provider,'request_metadata',None)):
+        reply.update(provider.request_metadata())
     try:
         if not 0.5 < threshold <= 1:
             raise VisionError("CONFIG", fields=["min_confidence"])
@@ -127,10 +175,22 @@ async def verify_route_image(image_path: Path, contract: dict, provider: VisionP
             image = image_path.read_bytes()
         except OSError:
             raise VisionError("CONFIG", fields=["map_screenshot"]) from None
-        if not image.startswith(b"\x89PNG\r\n\x1a\n") or len(image) > 4 * 1024 * 1024:
-            raise VisionError("CONFIG", fields=["PNG_under_4_MiB"])
+        if not image.startswith((b"\x89PNG\r\n\x1a\n",b'\xff\xd8')) or len(image) > 4 * 1024 * 1024:
+            raise VisionError("CONFIG", fields=["PNG_or_JPEG_under_4_MiB"])
+        metadata=image_metadata
+        if callable(getattr(provider,'prepare_image',None)):
+            image,prepared=provider.prepare_image(image)
+            metadata=prepared or metadata
+        if image.startswith(b'\xff\xd8'):
+            (evidence_dir/'sent-image.jpg').write_bytes(image)
+        if metadata:
+            record.actual['image_preprocessing']=metadata
         record.actual["sha256"] = hashlib.sha256(image).hexdigest()
         reply.update(await provider.observe(image))
+        schema=reply.get('observation_schema','blind-map-v2')
+        if schema not in {'clef-blind-v1','blind-map-v2'}:
+            raise VisionError('SCHEMA',fields=['observation_schema'])
+        record.actual['observation_schema']=schema
         record.actual.update({k: reply[k] for k in ("provider", "model", "latency_ms", "usage") if k in reply})
         raw = reply.get("content")
         try:
@@ -138,15 +198,18 @@ async def verify_route_image(image_path: Path, contract: dict, provider: VisionP
         except json.JSONDecodeError:
             raise VisionError("INVALID_JSON") from None
         try:
-            observation = VisualObservation.model_validate(data)
+            observation = (ClefObservation if schema=='clef-blind-v1' else VisualObservation).model_validate(data)
         except ValidationError as exc:
             names = sorted({str(e["loc"][0]) if e["loc"] and e["loc"][0] in VisualObservation.model_fields
                             else "observation" for e in exc.errors()})
             raise VisionError("SCHEMA", fields=names) from None
         record.actual.update({k: reply[k] for k in ("provider", "model", "latency_ms", "usage") if k in reply})
-        record.actual.update(model_summary=one_line(observation.summary),
-                             model_evidence=one_line(observation.evidence, 2000),
-                             observation={**observation.model_dump(), "evidence": one_line(observation.evidence, 2000)})
+        if isinstance(observation,ClefObservation):
+            record.actual.update(answers=observation.answers,observation=observation.model_dump())
+        else:
+            record.actual.update(model_summary=one_line(observation.summary),
+                                 model_evidence=one_line(observation.evidence, 2000),
+                                 observation={**observation.model_dump(), "evidence": one_line(observation.evidence, 2000)})
         record.status, record.reason, code = decide(observation, requirement, threshold)
         if code:
             record.actual["code"] = code
@@ -162,8 +225,10 @@ async def verify_route_image(image_path: Path, contract: dict, provider: VisionP
         if isinstance(reply.get("content"), str):
             reply["content"] = reply["content"][:8000]
         (evidence_dir / "request.json").write_text(json.dumps({**record.actual,
-            "requirement": requirement, "requirement_scope": "Python-only; not sent to model", "instructions": INSTRUCTIONS,
-            "output_schema": VisualObservation.model_json_schema()}, indent=2), encoding="utf-8")
+            "requirement": requirement, "requirement_scope": "Python-only; not sent to model",
+            "instructions": reply.get('state_text',INSTRUCTIONS),
+            "questions":reply.get('questions'),
+            "output_schema": (ClefObservation if record.actual['observation_schema']=='clef-blind-v1' else VisualObservation).model_json_schema()}, indent=2), encoding="utf-8")
         (evidence_dir / "response.json").write_text(json.dumps(reply, indent=2), encoding="utf-8")
         (evidence_dir / "verdict.json").write_text(record.model_dump_json(indent=2), encoding="utf-8")
     return record

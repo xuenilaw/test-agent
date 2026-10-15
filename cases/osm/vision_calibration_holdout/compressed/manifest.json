@@ -1,0 +1,82 @@
+{
+  "hamburg-leipzig.jpg": {
+    "format": "JPEG",
+    "quality": 90,
+    "subsampling": 0,
+    "size_bytes": 226802,
+    "original_dimensions": [
+      930,
+      745
+    ],
+    "dimensions": [
+      930,
+      745
+    ],
+    "source_sha256": "afaab198beb672a390247ba864b2e1822de98b19818f7fbc91231b654667b711",
+    "sha256": "429efe2e5993f5c1fcedc2d59bcbbd672e2d85eb033928d4850d036ec5c53287"
+  },
+  "rostock-berlin.jpg": {
+    "format": "JPEG",
+    "quality": 90,
+    "subsampling": 0,
+    "size_bytes": 263376,
+    "original_dimensions": [
+      930,
+      745
+    ],
+    "dimensions": [
+      930,
+      745
+    ],
+    "source_sha256": "fd7053708afaba03bb3eda7a2de6b117759574824b6adddcabfe575a29b080de",
+    "sha256": "5af26069089dd54bc3f64c4feff09075a583b97880b4f154b5a61c67834336eb"
+  },
+  "berlin-hamburg-wide.jpg": {
+    "format": "JPEG",
+    "quality": 90,
+    "subsampling": 0,
+    "size_bytes": 255404,
+    "original_dimensions": [
+      1090,
+      845
+    ],
+    "dimensions": [
+      1090,
+      845
+    ],
+    "source_sha256": "3a7deaea9149a34f4e8e013ba7ca87e1c5d62c9e0d3866c455f9f24deae5167e",
+    "sha256": "26a95cc654ade3efe83c33c4edee8a61b16bab7387031b69ed1060b0d4515c89"
+  },
+  "hamburg-berlin-wide.jpg": {
+    "format": "JPEG",
+    "quality": 90,
+    "subsampling": 0,
+    "size_bytes": 288222,
+    "original_dimensions": [
+      1090,
+      845
+    ],
+    "dimensions": [
+      1090,
+      845
+    ],
+    "source_sha256": "e22f79df832bfa12420cbe995e5ad8a6cf22405473ed6fefd77269c8c12f08e5",
+    "sha256": "e954bdfd3e9f8defe80203b5fca6b5d7ca86e19f7bc8ea04c95c4578c1c79e23"
+  },
+  "hamburg-bernau.jpg": {
+    "format": "JPEG",
+    "quality": 80,
+    "subsampling": 0,
+    "size_bytes": 268703,
+    "original_dimensions": [
+      930,
+      745
+    ],
+    "dimensions": [
+      930,
+      745
+    ],
+    "source_sha256": "aaf89230e8aea81b98a732246eb4445096bd391a15eac3c5cd494c3ff1d3eb57",
+    "sha256": "045f92e189e42dfac99d50339009a9040dfd15f49ee50190ece6e0f410c248ee"
+  }
+}

@@ -1,0 +1,130 @@
+{
+  "hamburg-berlin.jpg": {
+    "format": "JPEG",
+    "quality": 85,
+    "subsampling": 0,
+    "size_bytes": 272705,
+    "original_dimensions": [
+      930,
+      745
+    ],
+    "dimensions": [
+      930,
+      745
+    ],
+    "source_sha256": "2c21c766272f87cdb5af94ca7cd6b2e440f673fa075e2c190568f45869786769",
+    "sha256": "2a57b2f83b527fa520ae33de618c3aa05281974113491d764319b2090843e6fa"
+  },
+  "hamburg-munich.jpg": {
+    "format": "JPEG",
+    "quality": 80,
+    "subsampling": 0,
+    "size_bytes": 251591,
+    "original_dimensions": [
+      930,
+      745
+    ],
+    "dimensions": [
+      930,
+      745
+    ],
+    "source_sha256": "42d5a60f850c9bf360c478b5131976681f327c5cc27b5f508f45607ac1be8296",
+    "sha256": "396810ca3a6d259226a2fe8b086353e7875af68c8683a1194345432677b0a6d4"
+  },
+  "hamburg-potsdam.jpg": {
+    "format": "JPEG",
+    "quality": 90,
+    "subsampling": 0,
+    "size_bytes": 219826,
+    "original_dimensions": [
+      930,
+      745
+    ],
+    "dimensions": [
+      930,
+      745
+    ],
+    "source_sha256": "2ead62d74cf5fa903387dea0da3d9e9d3d4b7d9cf3df565e3e4ea40ff113cee1",
+    "sha256": "cfab447bf77934ca95d311c0a83066d0eb18700fac06ef7142d76db238c015b9"
+  },
+  "berlin-hamburg.jpg": {
+    "format": "JPEG",
+    "quality": 90,
+    "subsampling": 0,
+    "size_bytes": 219114,
+    "original_dimensions": [
+      930,
+      745
+    ],
+    "dimensions": [
+      930,
+      745
+    ],
+    "source_sha256": "319b143eb186ab6cca5fa8c046c1513b22a8a49feee9137b8c9456555e648d9a",
+    "sha256": "52a483d2a9e204d82569985ec69bc8c569ad61400120e0b3249828a6c5ab7683"
+  },
+  "bremen-berlin.jpg": {
+    "format": "JPEG",
+    "quality": 80,
+    "subsampling": 0,
+    "size_bytes": 247676,
+    "original_dimensions": [
+      930,
+      745
+    ],
+    "dimensions": [
+      930,
+      745
+    ],
+    "source_sha256": "a09d0d3fd86f774267ac8f014ccc53280e5a841a43a16daba30d3b9c82937fd0",
+    "sha256": "504790ddcba5436319fcfdc04463df87ae9845a7fc1138a86454bae0a0fd92d7"
+  },
+  "hamburg-berlin-viewport.jpg": {
+    "format": "JPEG",
+    "quality": 90,
+    "subsampling": 0,
+    "size_bytes": 210294,
+    "original_dimensions": [
+      674,
+      713
+    ],
+    "dimensions": [
+      674,
+      713
+    ],
+    "source_sha256": "85d12620fe74285cf3e0ea3a2f56e34c642b93a04dcbe24a72be5cdb448730ce",
+    "sha256": "ffa9cc86d4897fab4d81606e873399bef2994db7945f7cbcff691cabd51a2820"
+  },
+  "no-route.jpg": {
+    "format": "JPEG",
+    "quality": 80,
+    "subsampling": 0,
+    "size_bytes": 263815,
+    "original_dimensions": [
+      930,
+      745
+    ],
+    "dimensions": [
+      930,
+      745
+    ],
+    "source_sha256": "aa15a00bdef35fae536a972ff5f13d77f1511245164714fddf23236a43cb8be9",
+    "sha256": "7b0f2a97e0c717d0ac9a022752bd5d81308088d82f84cd343cfec5e3be4fabb2"
+  },
+  "tiles-blank.jpg": {
+    "format": "JPEG",
+    "quality": 90,
+    "subsampling": 0,
+    "size_bytes": 30584,
+    "original_dimensions": [
+      930,
+      745
+    ],
+    "dimensions": [
+      930,
+      745
+    ],
+    "source_sha256": "29f466c473eda411b08981e041a0a6332d3192f13a00cb45c161c2b0adaccfbc",
+    "sha256": "cdad1872dd481eed13d4c1b36fe75b5d252ea9a5e3dbfc42c587c4f0f1b9e634"
+  }
+}

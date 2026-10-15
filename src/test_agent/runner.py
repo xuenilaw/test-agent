@@ -11,13 +11,17 @@ from test_agent.schemas.results import CaseResult, CheckResult, StepResult
 from test_agent.tools.dom import Blocked, perform, capture_map
 from test_agent.tools.healing import HealingResolver
 from test_agent.verification.checks import verify
+from test_agent.faults import validate_fault_targets, applicable_faults, intercept_fault, outcomes_as_designed
 
 
 async def run_case(folder: Path, locators: Path, project_root: Path, *, headed=False,
                    output_root: Path | None = None, route_handler=None, timeout=15_000,
-                   vision_provider=None, skip_vision=False, locator_planner=None):
+                   vision_provider=None, skip_vision=False, locator_planner=None, faults=None):
     # Input errors propagate to the CLI as exit 2, before async_playwright starts.
     plan, source = load_plan(folder)
+    faults = list(dict.fromkeys(faults or []))
+    validate_fault_targets(faults, [(plan,source)])
+    faults = applicable_faults(faults, plan)
     declared = (source.get("contract") or {}).get("vision_checks", [])
     if declared and not skip_vision and vision_provider is None:
         from test_agent.verification.vision_providers import provider_from_env, VisionError, UnavailableVision
@@ -37,9 +41,36 @@ async def run_case(folder: Path, locators: Path, project_root: Path, *, headed=F
     resolver = HealingResolver.from_file(locators, vocabulary=source.get('vocabulary'),
         planner=locator_planner or LocatorPlanner(project_root), case_id=plan.case_id,
         run_id=run_id, evidence_dir=output)
+    original_specs = dict(resolver.specs)
+    if any(f.startswith('broken-locator:') for f in faults):
+        resolver.cache_path = output/'fault-cache'/'locators.cache.json'
+    for fault in faults:
+        name, _, target = fault.partition(':')
+        if name not in {'broken-locator','vision-click'}:
+            continue
+        spec = resolver.entries.get(target)
+        if spec:
+            for key in [target,*spec.aliases]:
+                resolver.entries.pop(key,None)
+        resolver.specs.pop(target,None)
+        if name == 'vision-click':
+            resolver.forced_vision.add(target)
+    def click_provider():
+        if skip_vision:
+            from test_agent.verification.vision_providers import VisionError
+            raise VisionError('SKIPPED')
+        if vision_provider is not None:
+            return vision_provider
+        from test_agent.verification.vision_providers import provider_from_env
+        load_dotenv(project_root/'.env')
+        return provider_from_env()
+    from test_agent.verification.vision_click import VisionClickFallback
+    click_fallback = VisionClickFallback(resolver,original_specs,click_provider,output/'vision-click')
+    resolver.click_fallback = click_fallback
     for name, data in (("plan", plan.model_dump()), ("source", source), ("locators", resolver.specs)):
         (output / f"{name}.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     result = CaseResult(case_id=plan.case_id, translation_folder=str(folder.resolve()),
+                        faults_injected=faults,
                         output_directory=str(output.resolve()),
                         steps=[StepResult(source_step=s.source_step,
                             actions=[{**a.model_dump(), "status": "NOT_RUN"} for a in s.actions],
@@ -73,8 +104,15 @@ async def run_case(folder: Path, locators: Path, project_root: Path, *, headed=F
                 tracing = True
                 page = await context.new_page()
                 page.set_default_timeout(timeout)
-                if route_handler:
-                    await page.route("**/*", route_handler)  # Offline fixtures abort all other hosts.
+                if route_handler or faults:
+                    async def intercept(route):
+                        if await intercept_fault(route,faults):
+                            return
+                        if route_handler:
+                            await route_handler(route)  # Offline fixtures abort other hosts.
+                        else:
+                            await route.continue_()
+                    await page.route("**/*", intercept)
                 for step, record in zip(plan.steps, result.steps):
                     record.status = "PASSED"
                     stop_case = False
@@ -183,6 +221,11 @@ async def run_case(folder: Path, locators: Path, project_root: Path, *, headed=F
             result.evidence_errors.append(type(exc).__name__)
     finally:
         result.locator_heals = resolver.heal_count
+        result.vision_click_attempts = sum(e['clicked'] for e in click_fallback.events)
+        result.vision_click_successes = sum(e['status']=='PASSED' for e in click_fallback.events)
+        result.fault_outcomes_as_designed = outcomes_as_designed(result,faults)
+        result.outcome_as_designed = (all(result.fault_outcomes_as_designed.values()) if faults else
+            result.status == source['contract']['designed_outcome'] if (source.get('contract') or {}).get('designed_outcome') else None)
         (output / 'resolved-locators.json').write_text(json.dumps(resolver.used_locators, ensure_ascii=False, indent=2))
         visuals = [c for s in result.steps for c in s.checks if c.kind == "route_geometry"]
         result.route_geometry_verified = bool(visuals) and all(c.status == "PASSED" for c in visuals)

@@ -427,3 +427,96 @@ DOM 断言、提交后的结果检测、cleanup 验证读取与 map 截图只使
 本次 live 故障注入使用 `artifacts/selfheal-demo-20261015/locators.json`（仅移除 layers control）。
 重跑该 demo 会先尝试使用其旁边的 cache；若要重新演示 Planner，先删除该临时目录内的 cache。
 不需要删除或编辑人工 `cases/osm/locators.json`。
+
+## Day 5：故障注入与一次 vision click
+
+`run` 与 `suite` 都支持重复的 `--fault` 参数；不知道的名称、未声明或仅用于断言的 target 返回 exit 2。
+正常不用 `--fault` 时维持原流程。suite 的故障模式先翻译/验证所有计划，确认 target 属于至少一条用例的动作，
+再启动浏览器；target 故障只施加到使用该 target 的用例。用例内的断言继续只用人工 locator。
+
+| 参数 | 注入方式 | 演示预期 |
+|---|---|---|
+| `--fault 'broken-locator:layers control'` | 只在内存移除 locator；本 run 的私有空 cache | OSM-003 自愈并 PASSED |
+| `--fault blank-tiles` | 拦截并 abort OSM tile hosts 的请求 | OSM-001 vision BLOCKED，step 5 仍执行 |
+| `--fault directions-503` | GET /directions 返回 503 | OSM-001 step 2 BLOCKED，后续 NOT_RUN |
+| `--fault 'vision-click:layers control'` | 内存禁用此 action 的 locator/cache/healing | OSM-003 通过截图点击并 PASSED |
+
+```bash
+uv run python -m test_agent run <VALIDATED_CASE_FOLDER> --locators cases/osm/locators.json --fault 'vision-click:layers control' --headed
+uv run python -m test_agent suite cases/osm/WBS_testcase1_osm.xlsx --locators cases/osm/locators.json --reuse --fault directions-503 --headed
+```
+
+不会编辑 cases 下的输入文件。结果/summary 记录 faults_injected 与 outcome_as_designed；后者还检查故障的
+关键行为（如真的 healed/vision、503 或 step 5 仍运行），不更改实际 PASSED/FAILED/BLOCKED。
+多个故障都满足才算 as designed；矛盾的组合可能为 false，这是诊断数据。
+
+Vision click 只支持 click：人工 locator → cache → heal 都不能定位时才考虑，fill/select/press 与任何检查都不走它。
+只有人工 locator 配置同时声明 `vision_click_effect` 和 `vision_click: {"min_confidence": 0.90}` 的 target 可用；
+effect 自己也必须有人工 locator。模型只收到完整 1280×800 PNG、target 的 vocabulary description 和输出 schema，
+不接收用例的 expected/value。Python 严格验证 found、confidence≥0.90 和图内坐标，一条用例每个 target 最多一次。
+配置的 provider 必须支持坐标（当前 Claude）；Clef 不支持，返回 VISION_CONFIG。
+
+点击前 effect 必须不可见，点击后必须通过人工 locator 变为唯一可见；没有效果则 VISION_CLICK_NO_EFFECT，不重试。
+因此错误点击不能单凭模型自信得到 PASS：Python 的 effect 检查和后续断言决定结果；这里不新增视觉真假判定的校准集。
+attempts/successes 仅为本次观察数量，不能当模型准确率。route vision 仍使用冻结图像校准，阈值保持 0.90。
+依据 [Claude 坐标文档](https://platform.claude.com/docs/en/build-with-claude/vision-coordinates)，1280×800 在标准上限内；
+请求还设置 oversized_image=error，禁止服务端悄悄缩放。图像 origin 在左上角，CSS 像素与截图坐标一致。
+`vision-click/click-N/` 保存原截图、标点副本、request/response/decision JSON；动作记录 locator_source=vision、
+坐标/confidence/summary，Case 与 suite totals 记录实际鼠标点击次数和成功次数。
+
+## Clef：先做 text-only smoke test（Part 2.1）
+
+在本地 `.env` 添加 `OPENROUTER_API_KEY`，不要粘贴到聊天或提交到 Git。然后运行：
+
+```bash
+uv run python -m test_agent clef-smoke
+```
+
+该命令只发一条 traffic-light 文本请求到 OpenRouter `/api/alpha/decisions`，model 为 `cloudflare/clef`，
+不使用 Chat Completions、不发送图片、不重试。成功输出 choice、probabilities、provider 和 usage；
+请求/安全结果保存在 artifacts/clef-smoke-...。缺 key 为 VISION_CONFIG（没有 HTTP 请求）；HTTP 错误只记录状态码。
+接口依据 [OpenRouter Decisions 文档](https://openrouter.ai/docs/guides/community/multimodal-decisions)。
+2026-10-15 的 text-only smoke 已成功（用户运行，HTTP 200）；后续实现了下面的 blind Clef provider。
+
+## Clef 图像验证与固定 JPEG 对照
+
+可在 `.env` 选择 `VISION_PROVIDER=clef`、`VISION_MODEL=cloudflare/clef`，凭证独立使用 `OPENROUTER_API_KEY`。
+切回 Claude 使用 `VISION_PROVIDER=anthropic`、原有 Claude `VISION_MODEL` 和 `ANTHROPIC_API_KEY`。
+不会替你改 `.env` 或选定生产 provider。GLM 的 Translator/Planner 仍使用 OPENAI_* 设置。
+Clef 不返回坐标；选 Clef 时 vision click 返回 VISION_CONFIG，不会偷偷换模型。
+
+Clef 每张图固定问三个 choice：绿色起点城市、红色终点城市、路线 continuous/broken/none/unclear。
+`cases/osm/vision_cities.json` 是全套用例共用的城市候选，不根据当前预期城市裁剪；预期与断言不发送给模型。
+Python 使用**所选选项的 probability**（不是另一个 confidence 指标）与 contract 的 0.90 比较：
+全部清晰匹配 → SUCCESS/PASSED；任一高概率错误城市（含 other）或断线 → FAILURE/FAILED；其余 → UNCLEAR/BLOCKED。
+actual 和 response.json 保存 choice、全部 probabilities、confidence；reason 列出所选概率。
+直接把需求问成 SUCCESS/FAILURE/UNCLEAR 会引入 anchoring，因此生产只实现 blind A；可选 direct B 没有运行。
+
+PNG 原件与 labels 不动。固定压缩规则：JPEG quality 90→85→80→75→70，保留彩色细节（subsampling=0），
+只有仍 ≥300000 bytes 才按固定上限缩小。JPEG、原 PNG hash、quality、大小和尺寸存于 compressed/manifest.json。
+重复 compress 不覆盖不同内容；校准前检查每张 JPEG 和原 PNG 的 hash。Clef 与 Claude JPEG 对照使用同一份字节。
+每个 run 的 vision evidence 还保存 sent-image.jpg 和处理参数，可用来人工检查小字是否仍可判断。
+
+```bash
+# 一次冻结（已有文件一致则保留；不覆写变化）
+uv run python -m test_agent calibrate compress cases/osm/vision_calibration
+uv run python -m test_agent calibrate compress cases/osm/vision_calibration_holdout
+
+# 两套都各运行 5 次；这些命令会调用 API 并产生费用
+VISION_PROVIDER=clef VISION_MODEL=cloudflare/clef uv run python -m test_agent calibrate run cases/osm/vision_calibration --image-variant jpeg --runs 5
+VISION_PROVIDER=clef VISION_MODEL=cloudflare/clef uv run python -m test_agent calibrate run cases/osm/vision_calibration_holdout --image-variant jpeg --runs 5
+VISION_PROVIDER=anthropic VISION_MODEL=claude-haiku-5-5 uv run python -m test_agent calibrate run cases/osm/vision_calibration --image-variant jpeg --runs 5
+VISION_PROVIDER=anthropic VISION_MODEL=claude-haiku-5-5 uv run python -m test_agent calibrate run cases/osm/vision_calibration_holdout --image-variant jpeg --runs 5
+```
+
+默认 `--image-variant png` 保留原流程。freeze 后更改任何原件都需要显式建立新数据集，不可偷偷替换。
+比较沿用 zero false PASS、正确图 PASS≥90%、明显错误 FAILED≥80%、无 INTERNAL error 的同一标准。
+选择 provider 前看 review 中 Claude PNG / Claude JPEG / Clef A 的表；速度、费用与错误率须一起评估。
+Claude 费用按官方短输入标准价格估算（非账单），Clef 使用 API 返回 cost；未知费用不当成零。
+
+本次 65+65 次 JPEG 对照（2026-10-15，另复用 65 次 Claude PNG 历史结果）已写入 review：
+Clef median 791 ms，Claude JPEG 1730 ms；但在 0.90 下，Clef 正确图 PASS=0%，Claude JPEG=100%。
+两者 false PASS 都为 0，明显错误 FAILED 分别只有 50.0% / 43.3%，因此两者都未达到全部验收标准。
+Clef 每张图 5 次返回的概率向量完全一致。未调低阈值、未改 prompt/label，未自动切换生产 provider。
+完整对照表见 `artifacts/clef-comparison-20261015/report.md`，可复查 `summary.json` 中所有原始报告路径。
+JPEG 没有降低 Claude 的正确图通过率，所以此数据不支持把 Clef 的较低表现归因于压缩；这是小样本结论。

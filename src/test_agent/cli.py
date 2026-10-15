@@ -130,6 +130,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--project-dir", type=Path, default=Path.cwd(),
                         help="Directory containing .env, cases/ and artifacts/ (default: current directory)")
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser('clef-smoke',help='One text-only OpenRouter Decisions request (no images)')
     translate_parser = commands.add_parser("translate", help=__doc__)
     translate_parser.add_argument("workbook", type=Path)
     translate_parser.add_argument("--case", default="OSM-001")
@@ -144,6 +145,7 @@ def main(argv: list[str] | None = None) -> int:
     suite_parser.add_argument("workbook", type=Path)
     suite_parser.add_argument("--locators", type=Path, required=True)
     suite_parser.add_argument("--reuse", action="store_true")
+    suite_parser.add_argument("--fault", action="append", default=[])
     suite_parser.add_argument("--skip-vision", action="store_true")
     suite_parser.add_argument("--headed", action="store_true")
     suite_parser.add_argument("--output-dir", type=Path)
@@ -161,24 +163,45 @@ def main(argv: list[str] | None = None) -> int:
     calibrate_run_parser.add_argument("--contracts", type=Path, default=Path("cases/osm/contracts.json"))
     calibrate_run_parser.add_argument("--case", default="OSM-001")
     calibrate_run_parser.add_argument("--output-dir", type=Path)
+    calibrate_run_parser.add_argument('--image-variant',choices=['png','jpeg'],default='png')
+    compress_parser=calibration_commands.add_parser('compress',help='Freeze deterministic JPEG copies of labelled PNGs')
+    compress_parser.add_argument('folder',type=Path)
     run_parser = commands.add_parser("run", help="Execute a validated plan including contract-declared vision checks")
     run_parser.add_argument("folder", type=Path)
     run_parser.add_argument("--locators", type=Path, required=True)
     run_parser.add_argument("--headed", action="store_true")
+    run_parser.add_argument("--fault", action="append", default=[])
     run_parser.add_argument("--output-dir", type=Path)
     run_parser.add_argument("--skip-vision", action="store_true", help="Skip declared vision checks as BLOCKED for offline/dev runs")
     args = parser.parse_args(argv)
+    if args.command == 'clef-smoke':
+        from test_agent.verification.clef import smoke
+        return asyncio.run(smoke(args.project_dir.resolve()))
+    if args.command in {'run','suite'}:
+        from test_agent.faults import validate_fault_names
+        try:
+            validate_fault_names(args.fault)
+        except ValueError as exc:
+            print(str(exc))
+            return 2
     if args.command == "suite":
         from test_agent.suite import run_suite, print_summary
-        summary = asyncio.run(run_suite(args.workbook, args.locators, args.project_dir.resolve(), reuse=args.reuse,
-            skip_vision=args.skip_vision, headed=args.headed, output_root=args.output_dir))
+        try:
+            summary = asyncio.run(run_suite(args.workbook, args.locators, args.project_dir.resolve(), reuse=args.reuse,
+                skip_vision=args.skip_vision, headed=args.headed, output_root=args.output_dir, faults=args.fault))
+        except ValueError as exc:
+            print(str(exc))
+            return 2
         print_summary(summary)
         return 0 if summary["status"] == "PASSED" else 1
     if args.command == "revalidate":
         return run_revalidation(args)
     if args.command == "calibrate":
         try:
-            if args.calibration_command == "capture":
+            if args.calibration_command == 'compress':
+                from test_agent.verification.compression import freeze_compressed
+                print(json.dumps(freeze_compressed(args.folder),ensure_ascii=False,indent=2))
+            elif args.calibration_command == "capture":
                 from test_agent.verification.calibration_capture import capture_set
                 labels = asyncio.run(capture_set(args.folder, args.locators, args.project_dir.resolve(), headed=args.headed, only=args.only, profile=args.profile))
                 print(f"Captured {len(labels)} images in {args.folder}")
@@ -189,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
                 load_dotenv(args.project_dir.resolve() / ".env")
                 contract = json.loads(args.contracts.read_text(encoding="utf-8"))[args.case]
                 output, report = asyncio.run(run_calibration(args.folder, provider=provider_from_env(),
-                    contract=contract, project_root=args.project_dir.resolve(), runs=args.runs, output_root=args.output_dir))
+                    contract=contract, project_root=args.project_dir.resolve(), runs=args.runs, output_root=args.output_dir,image_variant=args.image_variant))
                 print(report)
                 print(f"Saved: {output.resolve()}")
             return 0
@@ -201,7 +224,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             result = asyncio.run(run_case(args.folder, args.locators, args.project_dir.resolve(),
                                           headed=args.headed, output_root=args.output_dir,
-                                          skip_vision=args.skip_vision))
+                                          skip_vision=args.skip_vision, faults=args.fault))
         except Exception as exc:
             print(f"Input/config error ({type(exc).__name__}): {exc}")
             return 2

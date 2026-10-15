@@ -40,3 +40,8 @@ class CaseResult(StrictModel):
     reason: str | None = None
     route_geometry_verified: bool = False
     locator_heals: int = 0
+    faults_injected: list[str] = Field(default_factory=list)
+    fault_outcomes_as_designed: dict[str, bool] = Field(default_factory=dict)
+    outcome_as_designed: bool | None = None
+    vision_click_attempts: int = 0
+    vision_click_successes: int = 0

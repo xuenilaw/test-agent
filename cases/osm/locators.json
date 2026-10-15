@@ -78,7 +78,11 @@
   "layers control": {
     "strategy": "role",
     "role": "link",
-    "name": "Layers"
+    "name": "Layers",
+    "vision_click_effect": "map layers panel",
+    "vision_click": {
+      "min_confidence": 0.9
+    }
   },
   "map layers panel": {
     "strategy": "css",

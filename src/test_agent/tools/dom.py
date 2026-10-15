@@ -15,6 +15,16 @@ class Blocked(Exception):
         self.details = details
 
 
+class VisionClickConfig(StrictModel):
+    min_confidence: float
+
+    @model_validator(mode="after")
+    def threshold(self):
+        if self.min_confidence != .90:
+            raise ValueError('vision_click.min_confidence must be 0.90')
+        return self
+
+
 class LocatorSpec(StrictModel):
     strategy: Literal["role", "label", "placeholder", "text", "test_id", "css"]
     value: str | None = None
@@ -25,6 +35,8 @@ class LocatorSpec(StrictModel):
     ready_selector: str | None = None
     submit_effect_target: str | None = None
     selection_aliases: list[str] = []
+    vision_click_effect: str | None = None
+    vision_click: VisionClickConfig | None = None
 
     @model_validator(mode="after")
     def arguments(self):
@@ -35,6 +47,8 @@ class LocatorSpec(StrictModel):
             raise ValueError("Locator strategy requires value")
         if self.submit_key and not self.submit_effect_target:
             raise ValueError("submit_key requires submit_effect_target")
+        if bool(self.vision_click_effect) != (self.vision_click is not None):
+            raise ValueError('vision_click_effect and vision_click config must be declared together')
         return self
 
 
@@ -124,7 +138,15 @@ async def perform(page, resolver, action):
         if response is None or not response.ok:
             raise Blocked("navigation failed", code="NAVIGATION", http_status=response.status if response else None)
         return
-    loc, spec = await resolver.resolve_action(page, action.target)
+    try:
+        loc, spec = await resolver.resolve_action(page, action.target)
+    except Blocked as exc:
+        fallback = getattr(resolver, 'click_fallback', None)
+        eligible = exc.details.get('code') in {'NO_LOCATOR', 'HEAL_FAILED'} or (
+            exc.details.get('code') == 'LOCATOR_COUNT' and exc.details.get('count') == 0)
+        if action.action == 'click' and fallback and eligible:
+            return await fallback(page, action.target, exc)
+        raise
     if action.action == "click":
         # OSM submits directions via Enter in the destination field, not a Go button.
         if spec.submit_key:

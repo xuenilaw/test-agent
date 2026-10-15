@@ -18,6 +18,8 @@ class HealingResolver(Resolver):
         self.evidence_dir = evidence_dir
         self.attempted, self.failures = set(), {}
         self.events, self.metadata, self.used_locators = [], {}, []
+        self.forced_vision = set()
+        self.click_fallback = None
 
     def remember(self, target, spec, source):
         self.metadata[target] = dict(healed=source == 'healed', locator_source=source)
@@ -68,6 +70,8 @@ class HealingResolver(Resolver):
 
     async def resolve_action(self, page, target):
         self.metadata.pop(target, None)
+        if target in self.forced_vision:
+            raise Blocked('forced vision click', code='NO_LOCATOR', target=target)
         try:
             found = await super().resolve(page, target)
             self.remember(target, found[1], 'human')

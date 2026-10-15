@@ -10,7 +10,7 @@ from typing import Literal
 from pydantic import Field, model_validator
 from test_agent.schemas.plan import StrictModel
 from test_agent.schemas.contracts import NonblankText, RouteContract
-from test_agent.verification.vision import VisualObservation, decide, verify_route_image
+from test_agent.verification.vision import VisualObservation, ClefObservation, decide, verify_route_image
 
 
 class Requirement(StrictModel):
@@ -89,7 +89,7 @@ def rescore(records, threshold):
         item = dict(record)
         if record.get('observation') and record.get('code') in (None, 'VISION_INCONCLUSIVE', 'VISION_RULE_REJECTED'):
             item['status'], item['reason'], item['code'] = decide(
-                VisualObservation.model_validate(record['observation']), record['requirement'], threshold)
+                (ClefObservation if record.get('observation_schema')=='clef-blind-v1' else VisualObservation).model_validate(record['observation']), record['requirement'], threshold)
         replay.append(item)
     return totals(replay)
 
@@ -98,7 +98,8 @@ def summarize(records):
     per_image = {}
     for name in dict.fromkeys(r['image'] for r in records):
         group = [r for r in records if r['image']==name]
-        confidences = [r['observation']['confidence'] for r in group if r.get('observation')]
+        confidences = [(ClefObservation.model_validate(r['observation']).confidence if
+            r.get('observation_schema')=='clef-blind-v1' else r['observation']['confidence']) for r in group if r.get('observation')]
         summaries = Counter(r['model_summary'] for r in group if r.get('model_summary'))
         per_image[name] = dict(counts={s:sum(r['status']==s for r in group) for s in ('PASSED','FAILED','BLOCKED')},
             confidence_min=min(confidences) if confidences else None,
@@ -141,10 +142,16 @@ def report_markdown(summary, threshold):
     return '\n'.join(lines)+'\n'
 
 
-async def run_calibration(folder: Path, *, provider, contract: dict, project_root: Path, runs=5, output_root=None):
+async def run_calibration(folder: Path, *, provider, contract: dict, project_root: Path, runs=5, output_root=None, image_variant='png'):
     if isinstance(runs,bool) or not isinstance(runs,int) or not 1 <= runs <= 100:
         raise ValueError('runs must be an integer from 1 to 100')
     labels = load_labels(folder)
+    if image_variant not in {'png','jpeg'}:
+        raise ValueError('Unknown image variant')
+    if image_variant=='jpeg':
+        from test_agent.verification.compression import frozen_image
+        for label in labels:
+            frozen_image(folder,label)  # Validate all frozen inputs before any model call.
     typed = RouteContract.model_validate(contract)
     definitions = [v.model_dump() for v in typed.vision_checks if v.kind=='route_geometry']
     if len(definitions)!=1:
@@ -161,15 +168,19 @@ async def run_calibration(folder: Path, *, provider, contract: dict, project_roo
     for label in labels:
         for attempt in range(1,runs+1):
             started=time.perf_counter()
-            checked=await verify_route_image(folder / 'images' / label.file,contract,provider,
-                output / 'responses' / Path(label.file).stem / str(attempt),definition=definition)
+            image,metadata=(frozen_image(folder,label) if image_variant=='jpeg' else (folder/'images'/label.file,None))
+            checked=await verify_route_image(image,contract,provider,
+                output / 'responses' / Path(label.file).stem / str(attempt),definition=definition,image_metadata=metadata)
             a=checked.actual
             records.append(dict(image=label.file,attempt=attempt,expected=label.expected,ideal=label.ideal,
                 requirement=label.requirement.model_dump(),status=checked.status,reason=checked.reason,
                 code=a.get('code'),model_summary=a.get('model_summary'),observation=a.get('observation'),
+                observation_schema=a.get('observation_schema'),image_variant=image_variant,
+                answers=a.get('answers'),image_preprocessing=a.get('image_preprocessing'),
                 sha256=a.get('sha256'),model=a.get('model'),usage=a.get('usage',{}),
                 latency_ms=a.get('latency_ms',round((time.perf_counter()-started)*1000))))
             (output / 'results.json').write_text(json.dumps(dict(records=records,min_confidence=definition['min_confidence']),indent=2))
+            print(f"{label.file} {attempt}/{runs}: {checked.status}",flush=True)
     summary=summarize(records)
     (output / 'results.json').write_text(json.dumps(dict(records=records,summary=summary,
         min_confidence=definition['min_confidence']),indent=2))
