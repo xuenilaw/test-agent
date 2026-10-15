@@ -161,7 +161,7 @@ uv run python -m test_agent translate cases/osm/WBS_testcase1_osm.xlsx
 uv run python -m test_agent run artifacts/<translation-run>/cases/OSM-001 --locators cases/osm/locators.json --headed
 ```
 
-`run` 不调用 LLM。Plan Loader 要求 VALIDATED、合法的 plan.json 和新格式 source.json，
+`run` 默认执行 contract 中声明的视觉检查；没有声明时只使用 DOM。Plan Loader 要求 VALIDATED、合法的 plan.json 和新格式 source.json，
 并再次检查当前 Excel、contract 与保存的来源是否一致，再跑原有验证规则。
 输入错误退出码为 2，且不启动浏览器。旧 amendments 格式或 Excel/contract 已改动时请重新翻译。
 自定义 `--contracts` 路径会保存到 source.json。旧 artifact 没有此字段时按 workbook 旁的路径查找。
@@ -196,7 +196,7 @@ BLOCKED（SELECTION_MISMATCH），避免把执行器的选择错误误报为网�
 本地测试使用 `tests/fixtures/fake_osm.html` 拦截 OSM URL，其他请求全部中止；没有真实模型调用。
 测试需要项目 `.browsers/` 内的 Chromium，缺少时浏览器测试明确 skip。
 
-限制：只执行一条用例，没有 Planner、自愈或 Vision。route_connects 只检查路线面板可见、
+限制：只执行一条用例，没有 Planner 或自愈。DOM route_connects 只检查路线面板可见、
 起点和终点字段包含 contract 城市，不证明地图上的路线几何正确；results.json 明确记录
 `route_geometry_verified: false`。其他通用前置条件尚未解释执行，网络前置条件由实际导航结果判断。
 显示时间等于或超过 3 小时应 FAILED；不可解析的时间应 BLOCKED，不能改阈值来让它通过。
@@ -218,3 +218,155 @@ validation.json 的 `vocabulary_applied` 明确说明是否执行了这项检查
 已有不带 vocabulary 快照的历史计划仍兼容原有检查，运行时 aliases 也保留。
 重新翻译可以启用新验证。声明 target 不要求 locator 已存在，后续 Planner 可以为已声明
 但尚未定位的目标找 DOM locator；UNKNOWN_TARGET 和运行时 NO_LOCATOR 是不同问题。
+
+## D1：按用例声明的截图验证（Claude 优先，实验阶段）
+
+视觉检查由人决定，写在 workbook 旁的 `contracts.json` 中；Translator 不选择使用视觉的步骤，
+`plan.json` 只保留原有动作与 DOM 检查。OSM-001 的声明：
+
+```json
+"vision_checks": [
+  {"step": 4, "kind": "route_geometry",
+   "requirement": "The map shows one continuous route line from Hamburg to Berlin.",
+   "min_confidence": 0.90}
+]
+```
+
+起终点来自 contract 的 origin/destination。每项必须显式给出 min_confidence，要求 0.5 < 值 ≤ 1；
+没有代码默认值。目前只支持 route_geometry，step 必须存在，不允许重复 step/kind。
+Contract 改动后原翻译 artifact 会被判过期，需要重新翻译或重新验证生成新的 artifact，不能改旧运行结果。
+Excel 暂不改动；以后可考虑增加 Verify by 列。
+
+本地 `.env` 设置 `VISION_PROVIDER=anthropic`、`VISION_MODEL=<Claude API model ID>`
+和 `ANTHROPIC_API_KEY`。Claude 使用原生 Messages API；翻译仍使用 GLM。不要提交 `.env`。
+可选 `VISION_PROVIDER=glm` 使用 OpenAI compatible 接口；VISION_API_KEY、VISION_BASE_URL
+省略时沿用 OPENAI_API_KEY、OPENAI_BASE_URL，视觉模型必须显式配置。
+
+```bash
+uv run python -m test_agent run artifacts/<新的有效翻译>/cases/OSM-001 --locators cases/osm/locators.json --headed
+# 离线开发：跳过视觉检查，但仍记 BLOCKED，用例不能 PASSED
+uv run python -m test_agent run artifacts/<新的有效翻译>/cases/OSM-001 --locators cases/osm/locators.json --skip-vision
+```
+
+原来的 --vision 已移除。默认运行所有声明的检查；--skip-vision 不调用模型，逐项记录 VISION_SKIPPED。
+顺序：执行步骤动作 → 该步所有 DOM 检查通过 → 全页截图留证 → vision map locator 对应区域截图 →
+模型判断地图 → Python 校验 JSON 和结构化证据 → 后续步骤。DOM 失败时该步视觉检查保留 NOT_RUN。
+Selector 在 locators.json（vision map → #map），不写死在 Python 中；模型只收到地图，不收到侧栏。
+
+状态规则：视觉 FAILED（高置信 mismatch）立即停止；视觉 BLOCKED（不确定、规则拒绝、API 错误、
+跳过）继续后续步骤，用例最终仍 BLOCKED。若后续 DOM FAILED，则最终 FAILED，并保留两个原因。
+最终优先级为 FAILED > BLOCKED > PASSED。动作和 DOM 的 FAIL/BLOCKED 仍停止用例；清理照常执行。
+
+每个视觉 reason 都由 Python 写前半句，再附模型 summary（模型解释，不是事实证明），例如：
+- Vision FAILED: mismatch (0.94; min_confidence=0.85). Route ends at Munich.
+- Vision inconclusive (0.62 < 0.85): Map tiles still loading.
+- Vision match rejected by rule (min_confidence=0.85): endpoints_identifiable=false. ...
+- VISION_INCOMPLETE (min_confidence=0.85): stop_reason=max_tokens. No model explanation available.
+
+这些原因进入 StepResult、CaseResult 及 console 输出。summary 最多 200 字符，evidence 保存时截断到
+2000 字符，放在 actual.model_summary/model_evidence；都是不可信模型文本，后续 HTML Reporter 必须转义。
+0.90 是用户选择的未校准实验值，不代表 90% 实际正确率；match/mismatch 都使用它。
+即使 confidence 达标，也要求端点可识别、路线连续且城市匹配。Hamburg 可匹配 Hamburg, Germany，
+只比较逗号前完整城市名；不做模糊或子串匹配。要求自带国家/地区时保留完整限定词比较。
+视觉通过才设置 route_geometry_verified=true；行程时间仍可 FAILED。跳过或不确定时保持 false。
+
+证据保存在每次 run 的 vision/step-4-0/{request,response,verdict}.json，以及
+screenshots/route-4-0.png（地图）和 screenshots/step-4.png（全页）。记录两个路径、地图 SHA256、
+实际 min_confidence、provider/model、usage 和 latency_ms。response.json 在失败时也生成。
+错误码：VISION_INCOMPLETE、VISION_NOT_SINGLE_TEXT、VISION_HTTP、VISION_TIMEOUT、VISION_NETWORK、
+VISION_INVALID_JSON、VISION_SCHEMA、VISION_CONFIG。只记录安全的状态码、停止原因、block 类型或字段名；
+不记录 HTTP 异常原文、key 或认证 header。模型/动作/断言不自动重试。
+
+vision_providers.py 负责 API 和错误分类，vision.py 负责结构化判断，Runner 负责步骤和清理。
+以后接 Clef 时新增 provider adapter，复用运行规则。记录 tokens 和 latency 供比较，实际费用另按价格计算。
+校准集（正确、错误、交换方向、空地图、加载中）仍待建立；离线 fake 只证明运行逻辑。
+视觉 PASS 是模型判断，不是坐标或拓扑证明。
+
+官方参考：[Claude Vision](https://platform.claude.com/docs/en/build-with-claude/vision)、
+[GLM-4.6V](https://docs.z.ai/guides/vlm/glm-4.6v)。
+
+## 不调用 LLM 的重新验证
+
+只改 contract/vocabulary（例如视觉阈值 0.85 → 0.90）时，使用：
+
+```bash
+uv run python -m test_agent revalidate artifacts/translation-20261014T131235938292Z/cases/OSM-001
+```
+
+重新读取当前 Excel、contract、vocabulary，执行全部原有计划验证，并写新的 translation-... 文件夹。
+source.revalidated_from 记录来源，原 artifact 不变。只有 VALIDATED 才保存 plan.json。
+Excel 文字变化时 REJECTED/退出码 1，需要重新 translate；不能用 revalidate 绕过翻译。
+重新验证不调用模型或浏览器。运行时 load_plan 仍检查来源是否过期。
+
+代码内部错误标记 VISION_INTERNAL + error_class，传输错误才使用 NETWORK；不输出异常原文。
+Claude 同时保存 requested_model（请求名称）与 model（API 实际返回名称）。
+
+## 固定截图的视觉校准
+
+数据集：cases/osm/vision_calibration/images/*.png 和 labels.json。标签由人定义：
+PASS 表示应通过；NOT_PASS 表示不能通过；ideal 是最理想的 PASSED/FAILED/BLOCKED。
+当前 8 张：Hamburg→Berlin、不同 viewport 的正确路线、Munich、Potsdam、反向路线、Bremen 起点、
+没有路线、空白瓦片/加载中。主 viewport 为 1280×800；鲁棒性样本为 1024×768。
+通过 tools/dom.py 的 capture_map 读取 vision map 和 vision sidebar 定位条目，排除左侧侧栏覆盖。
+生产 Runner 和 capture 共用该方法；不修改 PNG 像素。加载中样本通过拦截瓦片请求制造不可读画面。
+
+仅在建立新数据集时捕获（会访问 OSM）；已冻结的图片不会覆盖：
+
+```bash
+uv run python -m test_agent calibrate capture cases/osm/vision_calibration
+```
+
+--only <预设文件名> 可补充一个不存在的图片，仍禁止覆盖；用于修正捕获设置时，必须在模型测量之前
+固定数据集并记录原因。不要为提高模型成绩而改图片或标签。
+
+测量只读本地固定图片，调用模型，不再访问 OSM：
+
+```bash
+uv run python -m test_agent calibrate run cases/osm/vision_calibration --runs 5
+```
+
+每图×5次顺序调用，无自动重试。使用生产同一 prompt/schema/provider 和 contract 阈值 0.90。
+artifacts/calibration-.../ 保存 labels/contract 快照、responses/（每次 request/response/verdict）、
+results.json 和 report.md。传输错误算 BLOCKED，不删除失败样本。
+报告包含逐图三种状态次数、置信度统计、模型 summary、false PASS（错误图通过）、missed PASS
+（正确图没有通过）、明确错误图的 FAILED 比例、BLOCKED 比例、错误码、延迟 p50/p95 和 tokens。
+未报告 usage 的调用按零计入每次尝试平均值，这是下界，不是精确账单；另列 usage 覆盖数。
+served model 来自 API 回应。
+
+decide(observation, requirement, min_confidence) 是纯函数。生产和校准共用判断；threshold 表把
+同一批 observation 在 0.80/0.85/0.90/0.95 重评分，不额外调用模型。API/解析等错误保持 BLOCKED。
+acceptance 看四项：false PASS=0、正确图通过率≥90%、明确错误图 FAILED≥80%、无 INTERNAL 错误。
+不达标时先看具体图片和 model_summary，报告事实，不能自动调整 prompt/标签/阈值。
+
+小样本不能代表生产准确率；confidence 是模型自报；OSM 瓦片外观会变化，因此此数据集刻意冻结。
+Claude/Clef 比较以后使用相同图片和标签。HTML 报告和 D2 locator fallback 不属于此功能。
+
+## Blind observation 与 hold-out（2026-10-15）
+
+视觉模型现在只接收地图和 observation schema，不接收预期城市、requirement 文本或图片文件名。
+它报告 green start / red end 的 city、position（on_label / near_other_city / unclear）、
+route_line（continuous / broken / none / unclear）、confidence、summary、evidence。
+Python 再与本地 contract 比较：城市和方向准确、两个端点都 on_label、路线连续且 confidence 达标才 PASS；
+明确的其他城市或断线为 FAILED；低 confidence、没有路线、不清楚或只能说在其他城市附近时 BLOCKED。
+模型仍可能看错，不能把 schema 当作识别正确性的证明。
+
+Claude adapter 接受 thinking/redacted_thinking 前缀 + 唯一 text 结果；只保存 thinking_present 和 block_types，
+不保存私有推理内容。零个或多个 text 仍 BLOCKED/NOT_SINGLE_TEXT。原来的 verdict schema 属于历史阶段；
+旧报告原样保留，其 threshold 表是当时判断规则的结果。新的 decide/replay 使用 blind-map-v2 schema。
+
+先捕获/检查/冻结新的 hold-out，再改 prompt，避免只对原有图片优化。当前 hold-out 包含 Leipzig、Rostock、
+新 viewport 的反向和正确路线、Bernau near-miss，图片和标签的 hash 在 capture.json。
+
+```bash
+# 仅用于新的空目录：访问 OSM 一次捕获 hold-out
+uv run python -m test_agent calibrate capture cases/osm/vision_calibration_holdout --profile holdout
+# 两组分别测量，使用相同 0.90 阈值；不再访问 OSM
+uv run python -m test_agent calibrate run cases/osm/vision_calibration --runs 5
+uv run python -m test_agent calibrate run cases/osm/vision_calibration_holdout --runs 5
+```
+
+不要覆盖已冻结的图片、改标签来提高成绩或自动采用别的阈值。比较需要同时看原集与 hold-out 的四条门槛，
+保持 0.90，等用户决定后再考虑阈值或 Clef。
+
+若 OSM 的 lazy directions 请求出错，FORM_NOT_READY 会附上已观察到的 GET 路径和 HTTP 状态
+（如 GET /directions → 503）；不额外请求，不重试。不知道状态时不会猜测。

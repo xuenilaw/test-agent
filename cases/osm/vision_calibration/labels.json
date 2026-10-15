@@ -1,0 +1,90 @@
+[
+  {
+    "file": "hamburg-berlin.png",
+    "route_shown": "Hamburg -> Berlin",
+    "requirement": {
+      "origin": "Hamburg",
+      "destination": "Berlin"
+    },
+    "expected": "PASS",
+    "ideal": "PASSED",
+    "why": "baseline"
+  },
+  {
+    "file": "hamburg-munich.png",
+    "route_shown": "Hamburg -> Munich",
+    "requirement": {
+      "origin": "Hamburg",
+      "destination": "Berlin"
+    },
+    "expected": "NOT_PASS",
+    "ideal": "FAILED",
+    "why": "wrong destination"
+  },
+  {
+    "file": "hamburg-potsdam.png",
+    "route_shown": "Hamburg -> Potsdam",
+    "requirement": {
+      "origin": "Hamburg",
+      "destination": "Berlin"
+    },
+    "expected": "NOT_PASS",
+    "ideal": "BLOCKED",
+    "why": "near-miss next to Berlin; map labels may be ambiguous"
+  },
+  {
+    "file": "berlin-hamburg.png",
+    "route_shown": "Berlin -> Hamburg",
+    "requirement": {
+      "origin": "Hamburg",
+      "destination": "Berlin"
+    },
+    "expected": "NOT_PASS",
+    "ideal": "FAILED",
+    "why": "reversed origin/destination markers"
+  },
+  {
+    "file": "bremen-berlin.png",
+    "route_shown": "Bremen -> Berlin",
+    "requirement": {
+      "origin": "Hamburg",
+      "destination": "Berlin"
+    },
+    "expected": "NOT_PASS",
+    "ideal": "FAILED",
+    "why": "wrong origin"
+  },
+  {
+    "file": "hamburg-berlin-viewport.png",
+    "route_shown": "Hamburg -> Berlin",
+    "requirement": {
+      "origin": "Hamburg",
+      "destination": "Berlin"
+    },
+    "expected": "PASS",
+    "ideal": "PASSED",
+    "why": "different viewport (1024x768)"
+  },
+  {
+    "file": "no-route.png",
+    "route_shown": "No route",
+    "requirement": {
+      "origin": "Hamburg",
+      "destination": "Berlin"
+    },
+    "expected": "NOT_PASS",
+    "ideal": "BLOCKED",
+    "why": "no calculated route"
+  },
+  {
+    "file": "tiles-blank.png",
+    "route_shown": "Hamburg -> Berlin",
+    "requirement": {
+      "origin": "Hamburg",
+      "destination": "Berlin"
+    },
+    "expected": "NOT_PASS",
+    "ideal": "BLOCKED",
+    "why": "tiles withheld; immediate screenshot after submit is unreadable"
+  }
+]

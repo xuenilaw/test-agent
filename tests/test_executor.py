@@ -24,8 +24,13 @@ def translation_folder(root):
     folder.mkdir(parents=True)
     fixture = json.loads((ROOT / "tests/fixtures/osm_translation.json").read_text())
     contract_file = ROOT / "cases/osm/contracts.json"
+    # Deterministic executor fixtures deliberately declare no visual requirement.
+    contract = json.loads(contract_file.read_text())["OSM-001"]
+    contract["vision_checks"] = []
+    contract_file = root / "contracts.json"
+    contract_file.write_text(json.dumps({"OSM-001": contract}))
     source = {"case": read_case(ROOT / "cases/osm/WBS_testcase1_osm.xlsx", "OSM-001"),
-              "contract": json.loads(contract_file.read_text())["OSM-001"],
+              "contract": contract,
               "contract_file": str(contract_file), "application_url": "https://www.openstreetmap.org/"}
     for name, data in (("plan", fixture["plan"]), ("source", source),
                        ("validation", {"status": "VALIDATED", "errors": [], "contract_applied": True})):
@@ -130,6 +135,26 @@ class BrowserExecutorTests(unittest.IsolatedAsyncioTestCase):
                      "screenshots/final.png", "screenshots/step-5.png"):
             self.assertTrue((folder / file).exists(), file)
         self.assertFalse(result.route_geometry_verified)
+
+    async def test_form_not_ready_reports_lazy_fetch_http_status(self):
+        self.html = self.html.replace('showDirections(); return false;', "fetch('/directions'); return false;")
+        locators=self.root/'locators.json'
+        locators.write_text(json.dumps(self.specs))
+        requests=[]
+        async def intercept(route):
+            requests.append(route.request.url)
+            if route.request.url=='https://www.openstreetmap.org/directions':
+                await route.fulfill(status=503,body='Service unavailable')
+            elif route.request.url=='https://www.openstreetmap.org/':
+                await route.fulfill(status=200,content_type='text/html',body=self.html)
+            else:
+                await route.abort()
+        result=await run_case(self.folder,locators,ROOT,output_root=self.root/'runs',route_handler=intercept,timeout=300)
+        self.assertEqual(result.status,'BLOCKED')
+        self.assertEqual(result.steps[1].details['code'],'FORM_NOT_READY')
+        self.assertEqual(result.steps[1].details['http_status'],503)
+        self.assertIn('GET /directions → 503',result.reason)
+        self.assertEqual(requests.count('https://www.openstreetmap.org/directions'),1)
 
     async def test_duration_failure_and_cleanup(self):
         self.html = self.html.replace('>2:45<', '>3:15<')

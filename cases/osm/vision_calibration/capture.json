@@ -1,0 +1,110 @@
+{
+  "completed": [
+    "hamburg-berlin.png",
+    "hamburg-munich.png",
+    "hamburg-potsdam.png",
+    "berlin-hamburg.png",
+    "bremen-berlin.png",
+    "hamburg-berlin-viewport.png",
+    "no-route.png",
+    "tiles-blank.png"
+  ],
+  "default_viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "robustness_viewport": {
+    "width": 1024,
+    "height": 768
+  },
+  "locators": {
+    "OSM Website": {
+      "strategy": "css",
+      "value": "#map",
+      "aliases": [
+        "application",
+        "page",
+        "OSM map page",
+        "OSM Website page"
+      ]
+    },
+    "vision map": {
+      "strategy": "css",
+      "value": "#map"
+    },
+    "vision sidebar": {
+      "strategy": "css",
+      "value": "#sidebar"
+    },
+    "route-planning control": {
+      "strategy": "css",
+      "value": "a[title='Find directions between two points']",
+      "aliases": [
+        "route-planning button",
+        "Route Planning"
+      ],
+      "ready_selector": "#sidebar_content #directions_route"
+    },
+    "starting-point field": {
+      "strategy": "placeholder",
+      "value": "From"
+    },
+    "destination field": {
+      "strategy": "placeholder",
+      "value": "To"
+    },
+    "travel-mode selector": {
+      "strategy": "css",
+      "value": "label[title='Car']",
+      "aliases": [
+        "Car/Driving travel mode",
+        "travel mode Car/Driving option",
+        "Car/Driving option"
+      ],
+      "selection_aliases": [
+        "Driving",
+        "Car/Driving",
+        "Car or driving"
+      ]
+    },
+    "request-directions button": {
+      "strategy": "placeholder",
+      "value": "To",
+      "submit_key": "Enter",
+      "submit_effect_target": "route"
+    },
+    "route": {
+      "strategy": "css",
+      "value": "#directions_route",
+      "aliases": [
+        "displayed route",
+        "route summary/directions panel",
+        "route summary",
+        "directions panel"
+      ]
+    },
+    "estimated journey duration": {
+      "strategy": "css",
+      "value": "#directions_route_time",
+      "aliases": [
+        "displayed journey duration",
+        "estimated driving duration",
+        "journey duration",
+        "estimated journey duration display",
+        "route duration"
+      ]
+    }
+  },
+  "loading_case": "tile requests intentionally aborted; screenshot immediately after Enter",
+  "images_sha256": {
+    "berlin-hamburg.png": "319b143eb186ab6cca5fa8c046c1513b22a8a49feee9137b8c9456555e648d9a",
+    "bremen-berlin.png": "a09d0d3fd86f774267ac8f014ccc53280e5a841a43a16daba30d3b9c82937fd0",
+    "hamburg-berlin-viewport.png": "85d12620fe74285cf3e0ea3a2f56e34c642b93a04dcbe24a72be5cdb448730ce",
+    "hamburg-berlin.png": "2c21c766272f87cdb5af94ca7cd6b2e440f673fa075e2c190568f45869786769",
+    "hamburg-munich.png": "42d5a60f850c9bf360c478b5131976681f327c5cc27b5f508f45607ac1be8296",
+    "hamburg-potsdam.png": "2ead62d74cf5fa903387dea0da3d9e9d3d4b7d9cf3df565e3e4ea40ff113cee1",
+    "no-route.png": "aa15a00bdef35fae536a972ff5f13d77f1511245164714fddf23236a43cb8be9",
+    "tiles-blank.png": "29f466c473eda411b08981e041a0a6332d3192f13a00cb45c161c2b0adaccfbc"
+  },
+  "inspection_note": "Inspected before the 40 model calls. Ineffective keyboard zoom replaced by a 1024x768 viewport; no-route and blank captures corrected to exclude sidebar overlay. No post-result image, label, prompt or parser tuning."
+}

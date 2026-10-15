@@ -4,18 +4,28 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from dotenv import load_dotenv
 from playwright.async_api import async_playwright
 from test_agent.plan_loader import load_plan
 from test_agent.schemas.results import CaseResult, CheckResult, StepResult
-from test_agent.tools.dom import Blocked, Resolver, perform
+from test_agent.tools.dom import Blocked, Resolver, perform, capture_map
 from test_agent.verification.checks import verify
 
 
 async def run_case(folder: Path, locators: Path, project_root: Path, *, headed=False,
-                   output_root: Path | None = None, route_handler=None, timeout=15_000):
+                   output_root: Path | None = None, route_handler=None, timeout=15_000,
+                   vision_provider=None, skip_vision=False):
     # Input errors propagate to the CLI as exit 2, before async_playwright starts.
     plan, source = load_plan(folder)
     resolver = Resolver.from_file(locators)
+    declared = (source.get("contract") or {}).get("vision_checks", [])
+    if declared and not skip_vision and vision_provider is None:
+        from test_agent.verification.vision_providers import provider_from_env, VisionError, UnavailableVision
+        load_dotenv(project_root / ".env")
+        try:
+            vision_provider = provider_from_env()
+        except VisionError as exc:
+            vision_provider = UnavailableVision(exc)
     local_browsers = project_root / ".browsers"
     if local_browsers.exists():
         os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(local_browsers))
@@ -34,6 +44,11 @@ async def run_case(folder: Path, locators: Path, project_root: Path, *, headed=F
                                for s in plan.steps])
     browser = context = page = None
     tracing = False
+    blocked_vision_reasons = []
+    for step, record in zip(plan.steps, result.steps):
+        record.checks.extend(CheckResult(kind=v["kind"], target="vision map", expected={
+            "requirement": v["requirement"], "min_confidence": v["min_confidence"]})
+            for v in declared if v["step"] == step.source_step)
 
     async def screenshot(name):
         if page is None or page.is_closed():
@@ -58,6 +73,7 @@ async def run_case(folder: Path, locators: Path, project_root: Path, *, headed=F
                     await page.route("**/*", route_handler)  # Offline fixtures abort all other hosts.
                 for step, record in zip(plan.steps, result.steps):
                     record.status = "PASSED"
+                    stop_case = False
                     try:
                         for action, entry in zip(step.actions, record.actions):
                             entry["status"] = "BLOCKED"
@@ -77,17 +93,48 @@ async def run_case(folder: Path, locators: Path, project_root: Path, *, headed=F
                             if checked.status != "PASSED":
                                 record.status, record.reason = checked.status, checked.reason
                                 record.details = checked.actual
+                                stop_case = True
                                 break
+                        record.screenshot = await screenshot(f"step-{step.source_step}.png")
+                        if not stop_case:
+                            from test_agent.verification.vision import verify_route_image, VisionError
+                            for index, definition in enumerate(v for v in declared if v["step"] == step.source_step):
+                                image = screenshots / f"route-{step.source_step}-{index}.png"
+                                capture_error = None
+                                try:
+                                    await capture_map(page, resolver, image)
+                                except Exception:
+                                    capture_error = VisionError("CONFIG", fields=["vision_map_screenshot"])
+                                visual = await verify_route_image(image, source["contract"], vision_provider,
+                                    output / "vision" / f"step-{step.source_step}-{index}", definition=definition,
+                                    full_image_path=record.screenshot, skip=skip_vision, capture_error=capture_error)
+                                record.checks[len(step.checks) + index] = visual
+                                result.route_geometry_verified = visual.status == "PASSED"
+                                for checked in record.checks[:len(step.checks)]:
+                                    if checked.kind == "route_connects":
+                                        checked.actual["route_geometry_verified"] = result.route_geometry_verified
+                                if visual.status != "PASSED":
+                                    label = f"Step {step.source_step} {definition['kind']}: {visual.reason}"
+                                    record.reason = "; ".join(filter(None, [record.reason, label]))
+                                    record.status, record.details = visual.status, visual.actual
+                                    if visual.status == "FAILED":
+                                        stop_case = True
+                                        break
+                                    blocked_vision_reasons.append(label)
                     except Exception as exc:
                         record.status = "BLOCKED"
                         record.reason = str(exc) if isinstance(exc, Blocked) else type(exc).__name__
                         record.details = getattr(exc, "details", {})
-                    record.screenshot = await screenshot(f"step-{step.source_step}.png")
-                    if record.status != "PASSED":
-                        result.status, result.reason = record.status, record.reason
+                        stop_case = True
+                    if record.screenshot is None:
+                        record.screenshot = await screenshot(f"step-{step.source_step}.png")
+                    if stop_case:
+                        result.status = record.status
+                        result.reason = "; ".join(dict.fromkeys([*blocked_vision_reasons, record.reason]))
                         break
                 else:
-                    result.status = "PASSED"
+                    result.status = "BLOCKED" if blocked_vision_reasons else "PASSED"
+                    result.reason = "; ".join(blocked_vision_reasons) or None
             finally:
                 # Preserve failure evidence, then cleanup before the session is closed.
                 await screenshot("final.png")
@@ -128,5 +175,7 @@ async def run_case(folder: Path, locators: Path, project_root: Path, *, headed=F
         else:
             result.evidence_errors.append(type(exc).__name__)
     finally:
+        visuals = [c for s in result.steps for c in s.checks if c.kind == "route_geometry"]
+        result.route_geometry_verified = bool(visuals) and all(c.status == "PASSED" for c in visuals)
         (output / "results.json").write_text(result.model_dump_json(indent=2), encoding="utf-8")
     return result

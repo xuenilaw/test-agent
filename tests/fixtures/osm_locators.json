@@ -1,5 +1,6 @@
 {
   "OSM Website": {"strategy":"css","value":"#map","aliases":["application","page"]},
+  "vision map": {"strategy":"css","value":"#map"},
   "route-planning control": {"strategy":"css","value":"a[title='Find directions between two points']","aliases":["route-planning button"],"ready_selector":"#directions-ready"},
   "starting-point field": {"strategy":"placeholder","value":"From"},
   "destination field": {"strategy":"placeholder","value":"To"},

@@ -1,0 +1,57 @@
+[
+  {
+    "file": "hamburg-leipzig.png",
+    "route_shown": "Hamburg -> Leipzig",
+    "requirement": {
+      "origin": "Hamburg",
+      "destination": "Berlin"
+    },
+    "expected": "NOT_PASS",
+    "ideal": "FAILED",
+    "why": "fresh wrong destination"
+  },
+  {
+    "file": "rostock-berlin.png",
+    "route_shown": "Rostock -> Berlin",
+    "requirement": {
+      "origin": "Hamburg",
+      "destination": "Berlin"
+    },
+    "expected": "NOT_PASS",
+    "ideal": "FAILED",
+    "why": "fresh wrong origin"
+  },
+  {
+    "file": "berlin-hamburg-wide.png",
+    "route_shown": "Berlin -> Hamburg",
+    "requirement": {
+      "origin": "Hamburg",
+      "destination": "Berlin"
+    },
+    "expected": "NOT_PASS",
+    "ideal": "FAILED",
+    "why": "reversed markers at a new viewport"
+  },
+  {
+    "file": "hamburg-berlin-wide.png",
+    "route_shown": "Hamburg -> Berlin",
+    "requirement": {
+      "origin": "Hamburg",
+      "destination": "Berlin"
+    },
+    "expected": "PASS",
+    "ideal": "PASSED",
+    "why": "fresh positive at a new viewport"
+  },
+  {
+    "file": "hamburg-bernau.png",
+    "route_shown": "Hamburg -> Bernau bei Berlin",
+    "requirement": {
+      "origin": "Hamburg",
+      "destination": "Berlin"
+    },
+    "expected": "NOT_PASS",
+    "ideal": "BLOCKED",
+    "why": "fresh near-miss north of Berlin"
+  }
+]

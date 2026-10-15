@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urljoin, urlsplit
 from pydantic import model_validator
 from test_agent.schemas.plan import StrictModel
 
@@ -79,6 +80,26 @@ class Resolver:
         return loc, spec
 
 
+async def capture_map(page, resolver, path):
+    """Capture the visible map rectangle, excluding a declared left sidebar overlay."""
+    loc, _ = await resolver.resolve(page, "vision map")
+    box = await loc.bounding_box()
+    if box is None:
+        raise Blocked("map has no visible bounds")
+    if "vision sidebar" in resolver.entries:
+        sidebar, _ = await resolver.resolve(page, "vision sidebar")
+        side = await sidebar.bounding_box()
+        if (side and side["x"] <= box["x"] and side["y"] < box["y"] + box["height"]
+                and side["y"] + side["height"] > box["y"]):
+            left = max(box["x"], side["x"] + side["width"])
+            box["width"] -= left - box["x"]
+            box["x"] = left
+    if box["width"] <= 0:
+        raise Blocked("sidebar covers map")
+    await page.screenshot(path=str(path), clip=box)
+    return box
+
+
 async def perform(page, resolver, action):
     if action.action == "navigate":
         response = await page.goto(action.value, wait_until="domcontentloaded", timeout=30_000)
@@ -98,13 +119,34 @@ async def perform(page, resolver, action):
                 raise Blocked("directions submission produced no visible result", code="SUBMIT_NO_EFFECT",
                               attempts=1, effect_target=spec.submit_effect_target) from exc
             return {"attempts": 1, "effect_target": spec.submit_effect_target}
-        await loc.click()
+        statuses = []
+        path = None
+        origin = None
+        def record_response(response):
+            parsed = urlsplit(response.url)
+            if (path and (parsed.scheme, parsed.netloc) == origin
+                    and parsed.path == path and response.request.method == "GET"):
+                statuses.append(response.status)
         if spec.ready_selector:
-            # The lazy-loaded sidebar template must exist before endpoint listeners are used.
-            try:
-                await page.locator(spec.ready_selector).wait_for(state="attached")
-            except Exception as exc:
-                raise Blocked("directions form is not ready", code="FORM_NOT_READY") from exc
+            href = await loc.get_attribute("href")
+            parsed = urlsplit(urljoin(page.url, href)) if href else None
+            path = parsed.path if parsed else None
+            origin = (parsed.scheme, parsed.netloc) if parsed else None
+            page.on("response", record_response)
+        try:
+            await loc.click()
+            if spec.ready_selector:
+                # Observe the existing lazy fetch; never send another request or retry.
+                try:
+                    await page.locator(spec.ready_selector).wait_for(state="attached")
+                except Exception as exc:
+                    status = next((s for s in reversed(statuses) if s >= 400), None)
+                    detail = f": GET {path} → {status}" if status is not None else ""
+                    raise Blocked("directions form is not ready" + detail, code="FORM_NOT_READY",
+                                  http_status=status, request_path=path) from exc
+        finally:
+            if spec.ready_selector:
+                page.remove_listener("response", record_response)
     elif action.action == "fill":
         await loc.fill(action.value)
     elif action.action == "press":

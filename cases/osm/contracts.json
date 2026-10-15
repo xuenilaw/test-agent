@@ -8,6 +8,11 @@
     "fields_step": 2,
     "visible_fields": ["starting-point field", "destination field"],
     "mode_step": 3,
-    "mode_values": ["Car", "Driving", "Car/Driving", "Car or driving"]
+    "mode_values": ["Car", "Driving", "Car/Driving", "Car or driving"],
+    "vision_checks": [
+      {"step": 4, "kind": "route_geometry",
+       "requirement": "The map shows one continuous route line from Hamburg to Berlin.",
+       "min_confidence": 0.90}
+    ]
   }
 }

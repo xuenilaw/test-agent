@@ -23,6 +23,35 @@ def write_json(path: Path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def run_revalidation(args) -> int:
+    from test_agent.plan_loader import load_plan
+    case_id = args.folder.name
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", case_id):
+        case_id = "invalid-case"
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    output = (args.output_dir or args.project_dir / "artifacts").resolve() / ("translation-" + stamp) / "cases" / case_id
+    output.mkdir(parents=True)
+    report = {"status": "REJECTED", "browser_executed": False, "model_called": False,
+              "errors": [], "output_directory": str(output),
+              "validation_scope": "schema, unchanged source coverage, current contract and vocabulary; not full semantic equivalence"}
+    try:
+        plan, source = load_plan(args.folder, revalidate=True)
+        if plan.case_id != case_id:
+            raise ValueError("Folder name must match case ID")
+        source["revalidated_from"] = str(args.folder.resolve())
+        write_json(output / "source.json", source)
+        write_json(output / "plan.json", plan.model_dump())
+        report.update(status="VALIDATED", contract_applied=source.get("contract") is not None,
+                      vocabulary_applied=source.get("vocabulary") is not None)
+    except ValidationError as exc:
+        report["errors"] = [f"Schema: {e['loc']} {e['msg']}" for e in exc.errors(include_input=False)]
+    except (ValueError, OSError, KeyError) as exc:
+        report["errors"] = [str(exc)]
+    write_json(output / "validation.json", report)
+    print(json.dumps(report, indent=2))
+    return 0 if report["status"] == "VALIDATED" else 1
+
+
 async def run_translation(args: argparse.Namespace) -> int:
     project_root = args.project_dir.resolve()
     output_root = args.output_dir or project_root / "artifacts"
@@ -42,8 +71,10 @@ async def run_translation(args: argparse.Namespace) -> int:
                      if args.contracts is not None or contracts_path.exists() else {})
         if not isinstance(contracts, dict):
             raise ValueError("Contract file must contain an object keyed by case ID.")
-        contract = (RouteContract.model_validate(contracts[args.case]).model_dump()
-                    if args.case in contracts else None)
+        typed_contract = RouteContract.model_validate(contracts[args.case]) if args.case in contracts else None
+        if typed_contract:
+            typed_contract.validate_case_steps({s["number"] for s in case["actions"]})
+        contract = typed_contract.model_dump() if typed_contract else None
         vocabulary_path = args.vocabulary or args.workbook.parent / "vocabulary.json"
         schema_stage = "Vocabulary schema"
         vocabulary = (TargetVocabulary.model_validate_json(vocabulary_path.read_text(encoding="utf-8")).model_dump()
@@ -102,17 +133,58 @@ def main(argv: list[str] | None = None) -> int:
     translate_parser.add_argument("--vocabulary", type=Path, help="Default: vocabulary.json beside the workbook (optional)")
     translate_parser.add_argument("--output-dir", type=Path, help="Default: <project-dir>/artifacts")
     translate_parser.add_argument("--url", default="https://www.openstreetmap.org/")
-    run_parser = commands.add_parser("run", help="Execute a validated translation case folder without AI")
+    revalidate_parser = commands.add_parser("revalidate", help="Revalidate an unchanged translated case against current requirements, without LLM")
+    revalidate_parser.add_argument("folder", type=Path)
+    revalidate_parser.add_argument("--output-dir", type=Path)
+    calibration_parser = commands.add_parser("calibrate", help="Capture once or measure a frozen labelled vision set")
+    calibration_commands = calibration_parser.add_subparsers(dest="calibration_command", required=True)
+    capture_parser = calibration_commands.add_parser("capture")
+    capture_parser.add_argument("folder", type=Path, nargs="?", default=Path("cases/osm/vision_calibration"))
+    capture_parser.add_argument("--locators", type=Path, default=Path("cases/osm/locators.json"))
+    capture_parser.add_argument("--headed", action="store_true")
+    capture_parser.add_argument("--only", help="Capture one named preset into a missing file; never overwrite")
+    capture_parser.add_argument("--profile", choices=["original", "holdout"], default="original")
+    calibrate_run_parser = calibration_commands.add_parser("run")
+    calibrate_run_parser.add_argument("folder", type=Path)
+    calibrate_run_parser.add_argument("--runs", type=int, default=5)
+    calibrate_run_parser.add_argument("--contracts", type=Path, default=Path("cases/osm/contracts.json"))
+    calibrate_run_parser.add_argument("--case", default="OSM-001")
+    calibrate_run_parser.add_argument("--output-dir", type=Path)
+    run_parser = commands.add_parser("run", help="Execute a validated plan including contract-declared vision checks")
     run_parser.add_argument("folder", type=Path)
     run_parser.add_argument("--locators", type=Path, required=True)
     run_parser.add_argument("--headed", action="store_true")
     run_parser.add_argument("--output-dir", type=Path)
+    run_parser.add_argument("--skip-vision", action="store_true", help="Skip declared vision checks as BLOCKED for offline/dev runs")
     args = parser.parse_args(argv)
+    if args.command == "revalidate":
+        return run_revalidation(args)
+    if args.command == "calibrate":
+        try:
+            if args.calibration_command == "capture":
+                from test_agent.verification.calibration_capture import capture_set
+                labels = asyncio.run(capture_set(args.folder, args.locators, args.project_dir.resolve(), headed=args.headed, only=args.only, profile=args.profile))
+                print(f"Captured {len(labels)} images in {args.folder}")
+            else:
+                from test_agent.verification.calibration import run_calibration, load_labels
+                from test_agent.verification.vision_providers import provider_from_env
+                load_labels(args.folder)  # Reject bad labels before any API call.
+                load_dotenv(args.project_dir.resolve() / ".env")
+                contract = json.loads(args.contracts.read_text(encoding="utf-8"))[args.case]
+                output, report = asyncio.run(run_calibration(args.folder, provider=provider_from_env(),
+                    contract=contract, project_root=args.project_dir.resolve(), runs=args.runs, output_root=args.output_dir))
+                print(report)
+                print(f"Saved: {output.resolve()}")
+            return 0
+        except Exception as exc:
+            print(f"Calibration failed: {type(exc).__name__}")
+            return 1
     if args.command == "run":
         from test_agent.runner import run_case
         try:
             result = asyncio.run(run_case(args.folder, args.locators, args.project_dir.resolve(),
-                                          headed=args.headed, output_root=args.output_dir))
+                                          headed=args.headed, output_root=args.output_dir,
+                                          skip_vision=args.skip_vision))
         except Exception as exc:
             print(f"Input/config error ({type(exc).__name__}): {exc}")
             return 2

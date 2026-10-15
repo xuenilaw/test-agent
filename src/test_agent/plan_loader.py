@@ -10,7 +10,7 @@ from test_agent.schemas.vocabulary import TargetVocabulary
 from test_agent.translation.validator import validate_plan
 
 
-def load_plan(folder: Path) -> tuple[TranslationPlan, dict]:
+def load_plan(folder: Path, *, revalidate=False) -> tuple[TranslationPlan, dict]:
     report = json.loads((folder / "validation.json").read_text(encoding="utf-8"))
     if report.get("status") != "VALIDATED" or report.get("errors"):
         raise ValueError("Translation is not VALIDATED; regenerate the plan.")
@@ -29,19 +29,27 @@ def load_plan(folder: Path) -> tuple[TranslationPlan, dict]:
     contracts = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     if not isinstance(contracts, dict):
         raise ValueError("Contract file must be an object.")
-    contract = RouteContract.model_validate(contracts[plan.case_id]).model_dump() if plan.case_id in contracts else None
-    if contract != source.get("contract"):
+    typed_contract = RouteContract.model_validate(contracts[plan.case_id]) if plan.case_id in contracts else None
+    if typed_contract:
+        typed_contract.validate_case_steps({s["number"] for s in current["actions"]})
+    contract = typed_contract.model_dump() if typed_contract else None
+    saved = source.get("contract")
+    saved = RouteContract.model_validate(saved).model_dump() if saved is not None else None
+    if contract != saved and not revalidate:
         raise ValueError("Contract requirements changed; translate again.")
     vocabulary = None
     if "vocabulary_file" in source:
         path = Path(source["vocabulary_file"])
         vocabulary = (TargetVocabulary.model_validate_json(path.read_text(encoding="utf-8")).model_dump()
                       if path.exists() else None)
-        if vocabulary != source.get("vocabulary"):
+        if vocabulary != source.get("vocabulary") and not revalidate:
             raise ValueError("Target vocabulary changed; translate again.")
     errors = validate_plan(plan, current, source["application_url"], contract,
                            set(vocabulary["targets"]) if vocabulary is not None else None)
     if errors:
         raise ValueError("Loaded plan rejected: " + "; ".join(errors))
     source["contract"] = contract
+    source["case"] = current
+    if "vocabulary_file" in source:
+        source["vocabulary"] = vocabulary
     return plan, source

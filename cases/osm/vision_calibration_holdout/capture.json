@@ -1,0 +1,118 @@
+{
+  "completed": [
+    "hamburg-leipzig.png",
+    "rostock-berlin.png",
+    "berlin-hamburg-wide.png",
+    "hamburg-berlin-wide.png",
+    "hamburg-bernau.png"
+  ],
+  "profile": "holdout",
+  "default_viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "robustness_viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "locators": {
+    "OSM Website": {
+      "strategy": "css",
+      "value": "#map",
+      "aliases": [
+        "application",
+        "page",
+        "OSM map page",
+        "OSM Website page"
+      ]
+    },
+    "vision map": {
+      "strategy": "css",
+      "value": "#map"
+    },
+    "vision sidebar": {
+      "strategy": "css",
+      "value": "#sidebar"
+    },
+    "route-planning control": {
+      "strategy": "css",
+      "value": "a[title='Find directions between two points']",
+      "aliases": [
+        "route-planning button",
+        "Route Planning"
+      ],
+      "ready_selector": "#sidebar_content #directions_route"
+    },
+    "starting-point field": {
+      "strategy": "placeholder",
+      "value": "From"
+    },
+    "destination field": {
+      "strategy": "placeholder",
+      "value": "To"
+    },
+    "travel-mode selector": {
+      "strategy": "css",
+      "value": "label[title='Car']",
+      "aliases": [
+        "Car/Driving travel mode",
+        "travel mode Car/Driving option",
+        "Car/Driving option"
+      ],
+      "selection_aliases": [
+        "Driving",
+        "Car/Driving",
+        "Car or driving"
+      ]
+    },
+    "request-directions button": {
+      "strategy": "placeholder",
+      "value": "To",
+      "submit_key": "Enter",
+      "submit_effect_target": "route"
+    },
+    "route": {
+      "strategy": "css",
+      "value": "#directions_route",
+      "aliases": [
+        "displayed route",
+        "route summary/directions panel",
+        "route summary",
+        "directions panel"
+      ]
+    },
+    "estimated journey duration": {
+      "strategy": "css",
+      "value": "#directions_route_time",
+      "aliases": [
+        "displayed journey duration",
+        "estimated driving duration",
+        "journey duration",
+        "estimated journey duration display",
+        "route duration"
+      ]
+    }
+  },
+  "loading_case": "tile requests intentionally aborted; screenshot immediately after Enter",
+  "frozen_at_utc": "2026-10-15T07:18:07.783549+00:00",
+  "frozen_before_blind_prompt": true,
+  "images_sha256": {
+    "berlin-hamburg-wide.png": "3a7deaea9149a34f4e8e013ba7ca87e1c5d62c9e0d3866c455f9f24deae5167e",
+    "hamburg-berlin-wide.png": "e22f79df832bfa12420cbe995e5ad8a6cf22405473ed6fefd77269c8c12f08e5",
+    "hamburg-bernau.png": "aaf89230e8aea81b98a732246eb4445096bd391a15eac3c5cd494c3ff1d3eb57",
+    "hamburg-leipzig.png": "afaab198beb672a390247ba864b2e1822de98b19818f7fbc91231b654667b711",
+    "rostock-berlin.png": "fd7053708afaba03bb3eda7a2de6b117759574824b6adddcabfe575a29b080de"
+  },
+  "labels_sha256": "6b02ac6077bdf44959ea32f62ea2c32457f2b52e00524b353c6b4ed24984b34a",
+  "prior_prompt_sha256": "baa90c5588c414937e9ee7b2abc97dfbf59cc67a17d9375a69f48e04afc1b816",
+  "prior_schema_fields": [
+    "verdict",
+    "confidence",
+    "observed_origin",
+    "observed_destination",
+    "endpoints_identifiable",
+    "continuous_line",
+    "summary",
+    "evidence"
+  ]
+}
