@@ -40,12 +40,15 @@ Your observations are model reports, not coordinate or topology proof.
 """
 
 
-def endpoint_matches(observed: str, expected: str) -> bool:
-    actual = " ".join(observed.split()).casefold()
-    required = " ".join(expected.split()).casefold()
-    if "," not in required:
-        actual = actual.split(",", 1)[0].strip()
-    return bool(required) and actual == required
+def endpoint_matches(observed: str, expected: str, aliases=()) -> bool:
+    for candidate in (expected, *aliases):
+        actual = " ".join(observed.split()).casefold()
+        required = " ".join(candidate.split()).casefold()
+        if "," not in required:
+            actual = actual.split(",", 1)[0].strip()
+        if required and actual == required:
+            return True
+    return False
 
 
 def one_line(text: str, limit=200) -> str:
@@ -85,9 +88,9 @@ def decide(observation: VisualObservation, requirement: dict, min_confidence: fl
     if near:
         return "BLOCKED", f"Vision match rejected by rule (min_confidence={threshold}): {', '.join(near)}. {summary}", "VISION_RULE_REJECTED"
     differences = []
-    if not endpoint_matches(observation.start_marker_city, requirement["origin"]):
+    if not endpoint_matches(observation.start_marker_city, requirement["origin"], requirement.get("origin_aliases", [])):
         differences.append(f"start city {observation.start_marker_city} differs from {requirement['origin']}")
-    if not endpoint_matches(observation.end_marker_city, requirement["destination"]):
+    if not endpoint_matches(observation.end_marker_city, requirement["destination"], requirement.get("destination_aliases", [])):
         differences.append(f"end city {observation.end_marker_city} differs from {requirement['destination']}")
     if observation.route_line == "broken":
         differences.append("route line is broken")
@@ -102,7 +105,9 @@ async def verify_route_image(image_path: Path, contract: dict, provider: VisionP
                              capture_error: VisionError | None = None) -> CheckResult:
     threshold = definition["min_confidence"]  # Required human-owned value, no default.
     requirement = {"origin": contract["origin"], "destination": contract["destination"],
-                   "description": definition["requirement"]}
+                   "description": definition["requirement"],
+                   "origin_aliases": contract.get("origin_aliases", []),
+                   "destination_aliases": contract.get("destination_aliases", [])}
     record = CheckResult(kind=definition["kind"], target="vision map", expected=requirement,
                          status="BLOCKED")
     record.actual = {"screenshot": str(image_path.resolve()), "full_screenshot": full_image_path,

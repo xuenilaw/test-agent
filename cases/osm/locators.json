@@ -1,12 +1,95 @@
 {
-  "OSM Website": {"strategy":"css","value":"#map","aliases":["application","page","OSM map page","OSM Website page"]},
-  "vision map": {"strategy":"css","value":"#map"},
-  "vision sidebar": {"strategy":"css","value":"#sidebar"},
-  "route-planning control": {"strategy":"css","value":"a[title='Find directions between two points']","aliases":["route-planning button","Route Planning"],"ready_selector":"#sidebar_content #directions_route"},
-  "starting-point field": {"strategy":"placeholder","value":"From"},
-  "destination field": {"strategy":"placeholder","value":"To"},
-  "travel-mode selector": {"strategy":"css","value":"label[title='Car']","aliases":["Car/Driving travel mode","travel mode Car/Driving option","Car/Driving option"],"selection_aliases":["Driving","Car/Driving","Car or driving"]},
-  "request-directions button": {"strategy":"placeholder","value":"To","submit_key":"Enter","submit_effect_target":"route"},
-  "route": {"strategy":"css","value":"#directions_route","aliases":["displayed route","route summary/directions panel","route summary","directions panel"]},
-  "estimated journey duration": {"strategy":"css","value":"#directions_route_time","aliases":["displayed journey duration","estimated driving duration","journey duration","estimated journey duration display","route duration"]}
+  "OSM Website": {
+    "strategy": "css",
+    "value": "#map",
+    "aliases": [
+      "application",
+      "page",
+      "OSM map page",
+      "OSM Website page"
+    ]
+  },
+  "vision map": {
+    "strategy": "css",
+    "value": "#map"
+  },
+  "vision sidebar": {
+    "strategy": "css",
+    "value": "#sidebar"
+  },
+  "route-planning control": {
+    "strategy": "css",
+    "value": "a[title='Find directions between two points']",
+    "aliases": [
+      "route-planning button",
+      "Route Planning"
+    ],
+    "ready_selector": "#sidebar_content #directions_route"
+  },
+  "starting-point field": {
+    "strategy": "placeholder",
+    "value": "From"
+  },
+  "destination field": {
+    "strategy": "placeholder",
+    "value": "To"
+  },
+  "travel-mode selector": {
+    "strategy": "css",
+    "value": "label[title='Car']",
+    "aliases": [
+      "Car/Driving travel mode",
+      "travel mode Car/Driving option",
+      "Car/Driving option"
+    ],
+    "selection_aliases": [
+      "Driving",
+      "Car/Driving",
+      "Car or driving"
+    ]
+  },
+  "request-directions button": {
+    "strategy": "placeholder",
+    "value": "To",
+    "submit_key": "Enter",
+    "submit_effect_target": "route"
+  },
+  "route": {
+    "strategy": "css",
+    "value": "#directions_route",
+    "aliases": [
+      "displayed route",
+      "route summary/directions panel",
+      "route summary",
+      "directions panel"
+    ]
+  },
+  "estimated journey duration": {
+    "strategy": "css",
+    "value": "#directions_route_time",
+    "aliases": [
+      "displayed journey duration",
+      "estimated driving duration",
+      "journey duration",
+      "estimated journey duration display",
+      "route duration"
+    ]
+  },
+  "layers control": {
+    "strategy": "role",
+    "role": "link",
+    "name": "Layers"
+  },
+  "map layers panel": {
+    "strategy": "css",
+    "value": "#map-ui .layers-ui"
+  },
+  "map layer selector": {
+    "strategy": "css",
+    "value": "#map-ui .base-layers"
+  },
+  "layers panel close button": {
+    "strategy": "css",
+    "value": "#map-ui button[aria-label=\"Close\"]"
+  }
 }

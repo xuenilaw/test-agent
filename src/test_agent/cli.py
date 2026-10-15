@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from pydantic import ValidationError
 
 from test_agent.readers.excel import read_case
-from test_agent.schemas.contracts import RouteContract
+from test_agent.schemas.contracts import parse_contract
 from test_agent.schemas.plan import TranslationPlan
 from test_agent.schemas.vocabulary import TargetVocabulary
 from test_agent.translation.validator import validate_plan
@@ -52,7 +52,7 @@ def run_revalidation(args) -> int:
     return 0 if report["status"] == "VALIDATED" else 1
 
 
-async def run_translation(args: argparse.Namespace) -> int:
+async def run_translation(args: argparse.Namespace, *, report_sink=None, quiet=False) -> int:
     project_root = args.project_dir.resolve()
     output_root = args.output_dir or project_root / "artifacts"
     run_id = "translation-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
@@ -71,7 +71,7 @@ async def run_translation(args: argparse.Namespace) -> int:
                      if args.contracts is not None or contracts_path.exists() else {})
         if not isinstance(contracts, dict):
             raise ValueError("Contract file must contain an object keyed by case ID.")
-        typed_contract = RouteContract.model_validate(contracts[args.case]) if args.case in contracts else None
+        typed_contract = parse_contract(contracts[args.case]) if args.case in contracts else None
         if typed_contract:
             typed_contract.validate_case_steps({s["number"] for s in case["actions"]})
         contract = typed_contract.model_dump() if typed_contract else None
@@ -102,13 +102,14 @@ async def run_translation(args: argparse.Namespace) -> int:
         if not report["errors"]:
             report["status"] = "VALIDATED"
             write_json(output / "plan.json", plan.model_dump())
-            for step in plan.steps:
+            for step in ([] if quiet else plan.steps):
                 print(f"\nSource step {step.source_step}: {step.source_action}")
                 for action in step.actions:
                     print(f"  ACTION {action.action}: {action.target} | {action.value!r}")
                 for check in step.checks:
                     print(f"  CHECK  {check.kind}: {check.target} | {check.operator} {check.value!r}")
-            print("\nCLEANUP", json.dumps([a.model_dump() for a in plan.cleanup]))
+            if not quiet:
+                print("\nCLEANUP", json.dumps([a.model_dump() for a in plan.cleanup]))
     except ValidationError as exc:
         report["errors"] = [f"{schema_stage}: {e['loc']} {e['msg']}" for e in exc.errors(include_input=False)]
     except (ValueError, OSError) as exc:
@@ -117,7 +118,10 @@ async def run_translation(args: argparse.Namespace) -> int:
         # Provider responses may contain credentials or request content.
         report["errors"] = [f"Translation failed: {type(exc).__name__}; HTTP {getattr(exc, 'status_code', 'n/a')}"]
     write_json(output / "validation.json", report)
-    print("\n" + json.dumps(report, indent=2))
+    if report_sink is not None:
+        report_sink.update(report)
+    if not quiet:
+        print("\n" + json.dumps(report, indent=2))
     return 0 if report["status"] == "VALIDATED" else 1
 
 
@@ -136,6 +140,13 @@ def main(argv: list[str] | None = None) -> int:
     revalidate_parser = commands.add_parser("revalidate", help="Revalidate an unchanged translated case against current requirements, without LLM")
     revalidate_parser.add_argument("folder", type=Path)
     revalidate_parser.add_argument("--output-dir", type=Path)
+    suite_parser = commands.add_parser("suite", help="Translate and execute all workbook cases in order")
+    suite_parser.add_argument("workbook", type=Path)
+    suite_parser.add_argument("--locators", type=Path, required=True)
+    suite_parser.add_argument("--reuse", action="store_true")
+    suite_parser.add_argument("--skip-vision", action="store_true")
+    suite_parser.add_argument("--headed", action="store_true")
+    suite_parser.add_argument("--output-dir", type=Path)
     calibration_parser = commands.add_parser("calibrate", help="Capture once or measure a frozen labelled vision set")
     calibration_commands = calibration_parser.add_subparsers(dest="calibration_command", required=True)
     capture_parser = calibration_commands.add_parser("capture")
@@ -157,6 +168,12 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument("--output-dir", type=Path)
     run_parser.add_argument("--skip-vision", action="store_true", help="Skip declared vision checks as BLOCKED for offline/dev runs")
     args = parser.parse_args(argv)
+    if args.command == "suite":
+        from test_agent.suite import run_suite, print_summary
+        summary = asyncio.run(run_suite(args.workbook, args.locators, args.project_dir.resolve(), reuse=args.reuse,
+            skip_vision=args.skip_vision, headed=args.headed, output_root=args.output_dir))
+        print_summary(summary)
+        return 0 if summary["status"] == "PASSED" else 1
     if args.command == "revalidate":
         return run_revalidation(args)
     if args.command == "calibrate":

@@ -25,7 +25,18 @@ Keep expected results in checks, separate from actions. Never change a limit or 
 Convert hours to minutes: under 3 hours is duration_minutes, less_than, numeric value 180.
 route_connects uses equals and text naming both endpoints. selected/input_value use equals.
 For selected checks the expected VALUE is the selected option, never the operator 'equals'.
+Every selected/input_value/route_connects/options_present check MUST include
+"operator": "equals" explicitly. Missing or null operators are invalid for these kinds.
+Example selection: {"kind":"selected","target":"travel-mode selector",
+"value":"Car","operator":"equals"}.
+Example layer selection: {"kind":"selected","target":"map layer selector",
+"value":"Tracestrack Topo","operator":"equals"}.
 visible uses null value and operator. Clean up inputs with fill and empty-string value.
+options_present uses equals and a list of exact option labels. For a list of available
+choices, use options_present instead of asserting that every choice is selected.
+For a layer case, select the named layer, check selected, then cleanup by selecting
+the default layer and closing the panel. Layer appearance is represented by selected
+DOM state; do not invent a visual assertion or declare an unsupported issue for it.
 Preserve the precondition as text for a future precondition checker; do not claim it was checked.
 The workbook's expected results are authoritative. If an action says ETA but
 its expected result explicitly defines journey duration, it is resolved, not ambiguous.

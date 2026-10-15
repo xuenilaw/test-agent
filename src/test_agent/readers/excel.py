@@ -9,6 +9,35 @@ HEADERS = ["TestCase_ID", "Target Application", "TestCase_Name", "Pre-condition"
            "Actions", "Expected", "Post action"]
 
 
+def read_case_ids(path: Path) -> list[str]:
+    """Workbook order; IDs/header errors are suite input errors, not model inputs."""
+    workbook = load_workbook(path, read_only=True, data_only=False)
+    ids = []
+    try:
+        for sheet in workbook:
+            rows = sheet.iter_rows(values_only=True)
+            headers = [str(v).strip() if v is not None else "" for v in next(rows, ())]
+            if "TestCase_ID" not in headers:
+                continue
+            if any(headers.count(name) != 1 for name in HEADERS):
+                raise ValueError(f"{sheet.title}: missing or duplicate required headers")
+            for row in rows:
+                if all(v is None or v == "" for v in row):
+                    continue
+                value = row[headers.index("TestCase_ID")]
+                if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", value.strip()):
+                    raise ValueError("Invalid case ID")
+                value = value.strip()
+                if value in ids:
+                    raise ValueError("Duplicate case ID: " + value)
+                ids.append(value)
+    finally:
+        workbook.close()
+    if not ids:
+        raise ValueError("No cases in workbook")
+    return ids
+
+
 def numbered_items(text: str) -> list[dict]:
     """Require explicit, consecutive numbers; don't silently discard lines."""
     parts = re.split(r"(?m)^\s*(\d+)[.)]\s+", text.strip())

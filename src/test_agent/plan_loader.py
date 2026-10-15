@@ -4,7 +4,7 @@ import json
 import re
 from pathlib import Path
 from test_agent.readers.excel import read_case
-from test_agent.schemas.contracts import RouteContract
+from test_agent.schemas.contracts import parse_contract
 from test_agent.schemas.plan import TranslationPlan
 from test_agent.schemas.vocabulary import TargetVocabulary
 from test_agent.translation.validator import validate_plan
@@ -29,12 +29,12 @@ def load_plan(folder: Path, *, revalidate=False) -> tuple[TranslationPlan, dict]
     contracts = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     if not isinstance(contracts, dict):
         raise ValueError("Contract file must be an object.")
-    typed_contract = RouteContract.model_validate(contracts[plan.case_id]) if plan.case_id in contracts else None
+    typed_contract = parse_contract(contracts[plan.case_id]) if plan.case_id in contracts else None
     if typed_contract:
         typed_contract.validate_case_steps({s["number"] for s in current["actions"]})
     contract = typed_contract.model_dump() if typed_contract else None
     saved = source.get("contract")
-    saved = RouteContract.model_validate(saved).model_dump() if saved is not None else None
+    saved = parse_contract(saved).model_dump() if saved is not None else None
     if contract != saved and not revalidate:
         raise ValueError("Contract requirements changed; translate again.")
     vocabulary = None

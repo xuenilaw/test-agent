@@ -15,6 +15,9 @@ class CheckResult(StrictModel):
     status: Status = "NOT_RUN"
     reason: str | None = None
 
+    healed: bool = False
+    locator_source: Literal['human', 'cache', 'healed'] | None = None
+
 
 class StepResult(StrictModel):
     source_step: int
@@ -36,3 +39,4 @@ class CaseResult(StrictModel):
     evidence_errors: list[str] = Field(default_factory=list)
     reason: str | None = None
     route_geometry_verified: bool = False
+    locator_heals: int = 0

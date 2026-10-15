@@ -7,13 +7,18 @@
     "travel-mode selector": "The driving, cycling or walking mode control.",
     "request-directions button": "Logical request to calculate directions; the Executor decides the UI mechanism.",
     "route": "The displayed route summary and directions panel.",
-    "estimated journey duration": "The displayed travel duration; this is not an arrival clock time."
+    "estimated journey duration": "The displayed travel duration; this is not an arrival clock time.",
+    "layers control": "Opens the map layers drawer.",
+    "map layers panel": "The drawer listing all available base map layers.",
+    "map layer selector": "The base layer radio group. Select a layer by its exact visible label; use selected to verify it.",
+    "layers panel close button": "Closes the map layers drawer after resetting the default layer."
   },
   "hints": [
     "Use OSM Website as the navigate target; put the supplied application URL in value.",
     "For Car or Driving, use select on travel-mode selector with value Car; the selected check also expects Car.",
     "Keep starting-point field and destination field as separate targets when filling or clearing inputs.",
     "ETA, route time, route duration and estimated duration mean estimated journey duration when the expected result defines travel duration.",
-    "Request directions uses the canonical target request-directions button, regardless of its implementation as an Enter keypress."
+    "Request directions uses the canonical target request-directions button, regardless of its implementation as an Enter keypress.",
+    "Layer cases: options_present on map layers panel lists expected labels; select and selected use map layer selector with the exact layer name. Reset Standard and click layers panel close button during cleanup."
   ]
 }

@@ -26,10 +26,11 @@ class AtomicAction(StrictModel):
 
 
 class Assertion(StrictModel):
-    kind: Literal["visible", "selected", "input_value", "route_connects", "duration_minutes"]
+    kind: Literal["visible", "selected", "input_value", "route_connects", "duration_minutes", "options_present"]
     target: str = Field(min_length=1)
-    value: str | float | int | None = None
-    operator: Literal["equals", "less_than"] | None = None
+    value: str | float | int | list[str] | None = None
+    operator: Literal["equals", "less_than"] | None = Field(default=None,
+        description="Required equals for selected/input_value/route_connects/options_present; less_than for duration_minutes; null only for visible.")
 
     @model_validator(mode="after")
     def check_arguments(self):
@@ -38,6 +39,10 @@ class Assertion(StrictModel):
         if self.kind == "duration_minutes":
             if type(self.value) not in (int, float) or self.value <= 0 or self.operator != "less_than":
                 raise ValueError("Duration requires a positive numeric minute limit and less_than.")
+        elif self.kind == "options_present":
+            if (not isinstance(self.value, list) or not self.value or
+                    any(not v.strip() for v in self.value) or self.operator != "equals"):
+                raise ValueError("options_present requires nonempty text labels and equals")
         elif self.kind == "visible":
             if self.value is not None or self.operator is not None:
                 raise ValueError("visible requires null value and operator.")

@@ -1,0 +1,99 @@
+"""Outer case loop: one case failure never hides later cases."""
+import argparse
+import json
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from test_agent.readers.excel import read_case_ids
+from test_agent.plan_loader import load_plan
+from test_agent.runner import run_case
+from test_agent.schemas.contracts import parse_contract
+
+
+def reusable_plan(root: Path, workbook: Path, case_id: str, url: str):
+    candidates=list(root.glob(f'**/translation-*/cases/{case_id}/validation.json'))
+    for report in sorted(candidates,key=lambda p:p.stat().st_mtime_ns,reverse=True):
+        try:
+            _,source=load_plan(report.parent)
+            if Path(source['case']['source']['file']).resolve()!=workbook.resolve() or source['application_url']!=url:
+                continue
+            if Path(source.get('contract_file',workbook.parent/'contracts.json')).resolve()!=(workbook.parent/'contracts.json').resolve():
+                continue
+            if Path(source.get('vocabulary_file',workbook.parent/'vocabulary.json')).resolve()!=(workbook.parent/'vocabulary.json').resolve():
+                continue
+            if (workbook.parent/'vocabulary.json').exists() and not source.get('vocabulary'):
+                continue
+            return report.parent
+        except (ValueError,OSError,KeyError):
+            continue
+    return None
+
+
+async def run_suite(workbook: Path, locators: Path, project_root: Path, *, reuse=False,
+                    skip_vision=False, headed=False, output_root=None, url='https://www.openstreetmap.org/'):
+    from test_agent.cli import run_translation
+    start=time.perf_counter()
+    stamp=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+    artifact_root=output_root or project_root/'artifacts'
+    output=artifact_root/('suite-'+stamp); output.mkdir(parents=True)
+    summary=dict(workbook=str(workbook.resolve()),output_directory=str(output.resolve()),cases=[],status='BLOCKED',reason=None)
+    try:
+        case_ids=read_case_ids(workbook)
+        path=workbook.parent/'contracts.json'
+        contracts=json.loads(path.read_text()) if path.exists() else {}
+        if not isinstance(contracts,dict):
+            raise ValueError('Contracts must be an object')
+        for case_id in case_ids:
+            case_start=time.perf_counter()
+            entry=dict(case_id=case_id,status='BLOCKED',reason=None,translation_folder=None,run_folder=None,
+                       translation_seconds=0,execution_seconds=0,reused=False,heals=0,designed_outcome=None,outcome_as_designed=None)
+            summary['cases'].append(entry)
+            try:
+                contract=parse_contract(contracts[case_id]).model_dump() if case_id in contracts else None
+                entry['designed_outcome']=(contract or {}).get('designed_outcome')
+                folder=reusable_plan(artifact_root,workbook,case_id,url) if reuse else None
+                entry['reused']=folder is not None
+                if folder is None:
+                    print(f'{case_id}: translating...',flush=True)
+                    report={}; started=time.perf_counter()
+                    args=argparse.Namespace(project_dir=project_root,workbook=workbook,case=case_id,
+                        contracts=None,vocabulary=None,output_dir=output,url=url)
+                    await run_translation(args,report_sink=report,quiet=True)
+                    entry['translation_seconds']=round(time.perf_counter()-started,3)
+                    folder=Path(report['output_directory'])
+                    entry['translation_folder']=str(folder.resolve())
+                    if report['status']!='VALIDATED':
+                        entry.update(code='TRANSLATION_REJECTED',reason='TRANSLATION_REJECTED: '+'; '.join(report['errors']),validation_errors=report['errors'])
+                        continue
+                entry['translation_folder']=str(folder.resolve())
+                print(f'{case_id}: running'+(' (reused plan)' if entry['reused'] else '')+'...',flush=True)
+                started=time.perf_counter()
+                result=await run_case(folder,locators,project_root,output_root=output,headed=headed,skip_vision=skip_vision)
+                entry.update(status=result.status,reason=result.reason,run_folder=result.output_directory,
+                             execution_seconds=round(time.perf_counter()-started,3),heals=getattr(result,'locator_heals',0))
+            except Exception as exc:
+                entry['reason']=str(exc) if isinstance(exc,ValueError) else type(exc).__name__
+            finally:
+                entry['duration_seconds']=round(time.perf_counter()-case_start,3)
+                if entry['designed_outcome'] is not None:
+                    entry['outcome_as_designed']=entry['status']==entry['designed_outcome']
+                (output/'summary.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2))
+        statuses=[e['status'] for e in summary['cases']]
+        summary['status']='FAILED' if 'FAILED' in statuses else 'BLOCKED' if 'BLOCKED' in statuses else 'PASSED'
+    except Exception as exc:
+        summary['reason']='SUITE_INPUT: '+(str(exc) if isinstance(exc,ValueError) else type(exc).__name__)
+    summary['duration_seconds']=round(time.perf_counter()-start,3)
+    summary['totals']={s:sum(c['status']==s for c in summary['cases']) for s in ['PASSED','FAILED','BLOCKED']}
+    summary['totals']['heals']=sum(c['heals'] for c in summary['cases'])
+    (output/'summary.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2))
+    return summary
+
+
+def print_summary(summary):
+    print('\nCase ID   Status    As designed  Reason')
+    for entry in summary['cases']:
+        print(f"{entry['case_id']:<9} {entry['status']:<9} {str(entry['outcome_as_designed']):<12} {entry['reason'] or '-'}")
+    print('Totals:',summary['totals'])
+    if summary['reason']:
+        print(summary['reason'])
+    print('Saved:',summary['output_directory'])

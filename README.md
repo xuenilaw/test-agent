@@ -370,3 +370,60 @@ uv run python -m test_agent calibrate run cases/osm/vision_calibration_holdout -
 
 若 OSM 的 lazy directions 请求出错，FORM_NOT_READY 会附上已观察到的 GET 路径和 HTTP 状态
 （如 GET /directions → 503）；不额外请求，不重试。不知道状态时不会猜测。
+
+## 多用例 suite（Part A）
+
+```bash
+uv run python -m test_agent suite cases/osm/WBS_testcase1_osm.xlsx --locators cases/osm/locators.json --headed
+# 未改变的计划复用；过期时重新翻译
+uv run python -m test_agent suite cases/osm/WBS_testcase1_osm.xlsx --locators cases/osm/locators.json --reuse --headed
+```
+
+按 Excel 中的顺序读取全部 Case ID，逐个 translate → validate → run。翻译 REJECTED 的 case 为
+BLOCKED/TRANSLATION_REJECTED，继续下一条；执行 FAILED/BLOCKED 也继续下一条。每条用例都新建
+browser/context，执行各自 cleanup 并关闭，状态不污染后续用例。
+--reuse 查找最新且通过现有 loader 校验的 VALIDATED 计划，同时要求 workbook/sidecar 来源一致；
+文字、contract、vocabulary 改变都会使旧计划过期。旧的无 vocabulary 快照计划不复用已有新词表。
+--skip-vision 仍记录视觉 BLOCKED，不能把缺少验证当通过。
+
+结果在 artifacts/suite-.../summary.json，包含每条 case 的状态/原因、翻译和执行时间、计划/运行路径、
+designed_outcome 与 outcome_as_designed，以及 suite totals。计划和 run 各自保留原来的目录格式。
+只有全部实际 PASSED 才退出 0，否则退出 1。OSM-002 设计为 FAILED，因此正常演示 suite 也会退出 1。
+
+contract 支持 type=route（旧数据默认）和 type=layer，由 discriminated union 严格验证。
+route 的 origin_aliases/destination_aliases 只做精确城市名称匹配（含原有大小写/空白规范化）；
+Munich 的 München alias 同时用于 DOM 和 Python 的 blind vision 比较，不发送给视觉模型。
+layer 声明 expected_options、selected_layer、default_layer 和步骤；options_present 记录所有缺少和
+额外选项，只要全部预期选项存在即可通过。selected 检查 checked radio；URL 的 layers 参数仅作额外证据。
+cleanup 重选 Standard 再关 drawer。没有为 layers 新增视觉检查：图块外观未经过视觉验证。
+前置条件仍保留为原文；打开 panel 后会记录当时选中的 layer，但不构造通用前置条件检查器。
+
+designed_outcome 是可选的演示预期 PASSED/FAILED，不参与应用断言、不改变真实状态。
+OSM-001 设计 PASSED，OSM-002 设计在 step 5 因 duration≥180 FAILED，OSM-003 设计 PASSED。
+例如 OSM-002 实际 FAILED 会显示 outcome_as_designed=true；若提前 BLOCKED 则 false。
+
+## Locator cache 与有限自愈（Part B）
+
+执行 click/fill/select/press 动作时先尝试人工 `locators.json`，再尝试同目录的 `locators.cache.json`，最后才调用 GLM Planner。
+cache 每次都必须重新匹配到**一个可见元素**，才可以使用。cache 自动生成并被 Git 忽略；删除后可重新学习。
+人工文件永远不会被自愈改写。正常运行命令与上面的 `suite` / `run` 相同。
+
+只有 vocabulary 中声明的 target，出现 NO_LOCATOR 或零匹配时才可自愈。人工 locator 匹配到多个
+元素时直接 BLOCKED，不让模型猜。Planner 没有工具，只收到 target、description 与最多 16000 字符的
+body ARIA snapshot；不会收到 HTML、cookies 或测试预期值。页面文字被当作数据处理。
+它只能建议 role+name / label / placeholder / text / test_id，不能生成 CSS，也不能改动作、输入或断言。
+Python 严格检查 JSON 和唯一可见匹配；每个 target 每条 case 最多一次模型调用，失败为 HEAL_FAILED。
+唯一匹配仍不等于语义一定正确，因此保留后续断言以及人工 review。
+
+成功的 cache entry 保存 locator、rationale、case、run id、model、timestamp 与 snapshot hash。
+运行目录的 `locator-input-<hash>.json` 保存截断输入；`locator-heals.json` 保存提议、匹配数和处理结果。
+`resolved-locators.json` 保存本次真正使用的定位规则，包括 cache 命中，便于事后复查。
+动作包含 healed、locator_source（human/cache/healed）；summary 的 heals 统计成功修复数。
+DOM 断言、提交后的结果检测、cleanup 验证读取与 map 截图只使用人工 locators，不使用 cache，也不会调用 Planner。
+即使同一个 target 刚被动作修复，之后的检查仍必须有可用的人工定位规则；缺失证据保持 BLOCKED，防止自愈隐藏应用问题。
+成功解析的 DOM 检查记录 healed=false、locator_source=human。
+复用 cache 不计作一次新修复。导航本身不需要 locator，因此没有 locator_source。
+
+本次 live 故障注入使用 `artifacts/selfheal-demo-20261015/locators.json`（仅移除 layers control）。
+重跑该 demo 会先尝试使用其旁边的 cache；若要重新演示 Planner，先删除该临时目录内的 cache。
+不需要删除或编辑人工 `cases/osm/locators.json`。

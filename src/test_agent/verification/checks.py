@@ -1,8 +1,10 @@
 """Observable DOM checks; route geometry is explicitly outside this baseline."""
 
 import re
+from urllib.parse import urlsplit, parse_qs
 from test_agent.schemas.results import CheckResult
-from test_agent.tools.dom import Blocked
+from test_agent.tools.dom import Blocked, radio_options
+from test_agent.verification.vision import endpoint_matches
 
 
 def parse_duration(text: str) -> float:
@@ -38,11 +40,25 @@ async def verify(page, resolver, check, contract):
               if (c.type === 'radio') return c.checked ? c.value : null;
               return null;
             }""")
+            options = await radio_options(loc)
+            if options and await loc.evaluate("e => !['LABEL','INPUT'].includes(e.tagName)"):
+                checked = [o["label"] for o in options if o["checked"]]
+                selected = checked[0] if len(checked) == 1 else None
             result.actual = {"raw_text": selected, "value": selected}
+            url = urlsplit(page.url)
+            result.actual["url_layers"] = (parse_qs(url.query).get("layers") or parse_qs(url.fragment).get("layers"))
             expected = str(check.value).casefold()
             actual = str(selected).casefold()
-            modes = {v.casefold() for v in contract["mode_values"]} if contract else set()
+            modes = {v.casefold() for v in contract.get("mode_values", [])} if contract else set()
             passed = actual == expected or (actual in modes and expected in modes)
+        elif check.kind == "options_present":
+            options = await radio_options(loc)
+            actual = [o["label"] for o in options]
+            missing = sorted(set(check.value) - set(actual))
+            result.actual = {"options": actual, "missing": missing,
+                             "extra": sorted(set(actual) - set(check.value)),
+                             "selected_labels": [o["label"] for o in options if o["checked"]]}
+            passed = not missing
         elif check.kind == "route_connects":
             if not contract:
                 raise Blocked("route check requires a contract", code="NO_ROUTE_CONTRACT")
@@ -53,7 +69,8 @@ async def verify(page, resolver, check, contract):
                              "destination": destination, "route_geometry_verified": False,
                              "geocoded_fields": origin.casefold() != contract["origin"].casefold()
                                                 and destination.casefold() != contract["destination"].casefold()}
-            passed = contract["origin"].casefold() in origin.casefold() and contract["destination"].casefold() in destination.casefold()
+            passed = (endpoint_matches(origin, contract["origin"], contract.get("origin_aliases", [])) and
+                      endpoint_matches(destination, contract["destination"], contract.get("destination_aliases", [])))
         elif check.kind == "duration_minutes":
             raw = await loc.inner_text()
             result.actual = {"raw_text": raw}
@@ -62,9 +79,14 @@ async def verify(page, resolver, check, contract):
             passed = minutes < check.value
         result.status = "PASSED" if passed else "FAILED"
         if not passed:
-            result.reason = "actual result does not meet expected result"
+            result.reason = (f"Duration {result.actual['parsed_minutes']:g} minutes is not less than {check.value} minutes"
+                             if check.kind == "duration_minutes" else "actual result does not meet expected result")
     except Exception as exc:
         result.status = "BLOCKED"
         result.reason = str(exc) if isinstance(exc, Blocked) else type(exc).__name__
         result.actual.update(getattr(exc, "details", {}))
+    if hasattr(resolver, 'metadata_for'):
+        metadata = resolver.metadata_for(check.target)
+        result.healed = metadata.get('healed', False)
+        result.locator_source = metadata.get('locator_source')
     return result

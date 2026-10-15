@@ -1,0 +1,16 @@
+<!doctype html><html><body>
+<main id="map"><h1>OSM</h1></main>
+<a href="#" aria-label="Layers" onclick="document.querySelector('#map-ui').hidden=false;return false;">Layers</a>
+<div id="map-ui" hidden><button aria-label="Close" onclick="document.querySelector('#map-ui').hidden=true">Close</button>
+<div class="layers-ui"><h2>Map Layers</h2><div class="base-layers">
+<input type="radio" name="layer" id="standard" checked><label for="standard">Standard</label>
+<input type="radio" name="layer" id="cyclosm"><label for="cyclosm">CyclOSM</label>
+<input type="radio" name="layer" id="cycle"><label for="cycle">Cycle Map</label>
+<input type="radio" name="layer" id="transport"><label for="transport">Transport Map</label>
+<input type="radio" name="layer" id="topo"><label for="topo">Tracestrack Topo</label>
+<input type="radio" name="layer" id="hot"><label for="hot">Humanitarian</label>
+<input type="radio" name="layer" id="shortbread"><label for="shortbread">Shortbread</label>
+<input type="radio" name="layer" id="omt"><label for="omt">MapTiler OMT</label>
+</div></div></div>
+<script>document.querySelectorAll('input').forEach(r=>r.addEventListener('change',()=>location.hash='layers='+r.id));</script>
+</body></html>

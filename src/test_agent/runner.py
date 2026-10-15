@@ -8,16 +8,16 @@ from dotenv import load_dotenv
 from playwright.async_api import async_playwright
 from test_agent.plan_loader import load_plan
 from test_agent.schemas.results import CaseResult, CheckResult, StepResult
-from test_agent.tools.dom import Blocked, Resolver, perform, capture_map
+from test_agent.tools.dom import Blocked, perform, capture_map
+from test_agent.tools.healing import HealingResolver
 from test_agent.verification.checks import verify
 
 
 async def run_case(folder: Path, locators: Path, project_root: Path, *, headed=False,
                    output_root: Path | None = None, route_handler=None, timeout=15_000,
-                   vision_provider=None, skip_vision=False):
+                   vision_provider=None, skip_vision=False, locator_planner=None):
     # Input errors propagate to the CLI as exit 2, before async_playwright starts.
     plan, source = load_plan(folder)
-    resolver = Resolver.from_file(locators)
     declared = (source.get("contract") or {}).get("vision_checks", [])
     if declared and not skip_vision and vision_provider is None:
         from test_agent.verification.vision_providers import provider_from_env, VisionError, UnavailableVision
@@ -33,6 +33,10 @@ async def run_case(folder: Path, locators: Path, project_root: Path, *, headed=F
     output = (output_root or project_root / "artifacts") / run_id / "cases" / plan.case_id
     screenshots = output / "screenshots"
     screenshots.mkdir(parents=True)
+    from test_agent.planning.locator import LocatorPlanner
+    resolver = HealingResolver.from_file(locators, vocabulary=source.get('vocabulary'),
+        planner=locator_planner or LocatorPlanner(project_root), case_id=plan.case_id,
+        run_id=run_id, evidence_dir=output)
     for name, data in (("plan", plan.model_dump()), ("source", source), ("locators", resolver.specs)):
         (output / f"{name}.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     result = CaseResult(case_id=plan.case_id, translation_folder=str(folder.resolve()),
@@ -83,6 +87,7 @@ async def run_case(folder: Path, locators: Path, project_root: Path, *, headed=F
                                 entry.update(reason=str(exc), **exc.details)
                                 raise
                             entry.update(metadata or {})
+                            entry.update(resolver.metadata_for(action.target))
                             entry["status"] = "PASSED"
                             spec = resolver.entries.get(action.target)
                             if spec and action.action == "click" and spec.submit_key:
@@ -144,7 +149,9 @@ async def run_case(folder: Path, locators: Path, project_root: Path, *, headed=F
                     try:
                         if page is None:
                             raise Blocked("browser page unavailable")
-                        await perform(page, resolver, action)
+                        metadata = await perform(page, resolver, action)
+                        entry.update(metadata or {})
+                        entry.update(resolver.metadata_for(action.target))
                         entry["status"] = "PASSED"
                         if action.action == "fill":
                             loc, _ = await resolver.resolve(page, action.target)
@@ -175,6 +182,8 @@ async def run_case(folder: Path, locators: Path, project_root: Path, *, headed=F
         else:
             result.evidence_errors.append(type(exc).__name__)
     finally:
+        result.locator_heals = resolver.heal_count
+        (output / 'resolved-locators.json').write_text(json.dumps(resolver.used_locators, ensure_ascii=False, indent=2))
         visuals = [c for s in result.steps for c in s.checks if c.kind == "route_geometry"]
         result.route_geometry_verified = bool(visuals) and all(c.status == "PASSED" for c in visuals)
         (output / "results.json").write_text(result.model_dump_json(indent=2), encoding="utf-8")

@@ -6,13 +6,76 @@
     "duration_step": 5,
     "limit_minutes": 180,
     "fields_step": 2,
-    "visible_fields": ["starting-point field", "destination field"],
+    "visible_fields": [
+      "starting-point field",
+      "destination field"
+    ],
     "mode_step": 3,
-    "mode_values": ["Car", "Driving", "Car/Driving", "Car or driving"],
+    "mode_values": [
+      "Car",
+      "Driving",
+      "Car/Driving",
+      "Car or driving"
+    ],
     "vision_checks": [
-      {"step": 4, "kind": "route_geometry",
-       "requirement": "The map shows one continuous route line from Hamburg to Berlin.",
-       "min_confidence": 0.90}
+      {
+        "step": 4,
+        "kind": "route_geometry",
+        "requirement": "The map shows one continuous route line from Hamburg to Berlin.",
+        "min_confidence": 0.9
+      }
+    ],
+    "type": "route",
+    "designed_outcome": "PASSED"
+  },
+  "OSM-002": {
+    "origin": "Hamburg",
+    "destination": "Munich",
+    "route_step": 4,
+    "duration_step": 5,
+    "limit_minutes": 180,
+    "fields_step": 2,
+    "visible_fields": [
+      "starting-point field",
+      "destination field"
+    ],
+    "mode_step": 3,
+    "mode_values": [
+      "Car",
+      "Driving",
+      "Car/Driving",
+      "Car or driving"
+    ],
+    "vision_checks": [
+      {
+        "step": 4,
+        "kind": "route_geometry",
+        "requirement": "The map shows one continuous route line from Hamburg to Munich.",
+        "min_confidence": 0.9
+      }
+    ],
+    "type": "route",
+    "designed_outcome": "FAILED",
+    "destination_aliases": [
+      "München"
     ]
+  },
+  "OSM-003": {
+    "type": "layer",
+    "panel_step": 2,
+    "select_step": 3,
+    "expected_options": [
+      "Standard",
+      "CyclOSM",
+      "Cycle Map",
+      "Transport Map",
+      "Tracestrack Topo",
+      "Humanitarian",
+      "Shortbread",
+      "MapTiler OMT"
+    ],
+    "selected_layer": "Tracestrack Topo",
+    "default_layer": "Standard",
+    "designed_outcome": "PASSED"
   }
 }

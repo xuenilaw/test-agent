@@ -1,6 +1,7 @@
 """Fixed locator strategies and browser actions. No code from configuration."""
 
 import json
+import re
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urljoin, urlsplit
@@ -55,10 +56,8 @@ class Resolver:
             raise ValueError("Locator file must be an object")
         return cls(data)
 
-    async def resolve(self, page, target):
-        spec = self.entries.get(target)
-        if spec is None:
-            raise Blocked(f"no locator for target '{target}'", code="NO_LOCATOR", target=target)
+    @staticmethod
+    def build_locator(page, spec):
         if spec.strategy == "role":
             loc = page.get_by_role(spec.role, name=spec.name, exact=True)
         elif spec.strategy == "css":
@@ -66,7 +65,17 @@ class Resolver:
         else:
             method = getattr(page, "get_by_" + spec.strategy)
             loc = method(spec.value) if spec.strategy == "test_id" else method(spec.value, exact=True)
-        loc = loc.filter(visible=True)
+        return loc
+
+    async def resolve_action(self, page, target):
+        """Action resolution; subclasses may opt into constrained healing here."""
+        return await self.resolve(page, target)
+
+    async def resolve(self, page, target):
+        spec = self.entries.get(target)
+        if spec is None:
+            raise Blocked(f"no locator for target '{target}'", code="NO_LOCATOR", target=target)
+        loc = self.build_locator(page, spec).filter(visible=True)
         count = await loc.count()
         if count == 0:
             try:
@@ -100,13 +109,22 @@ async def capture_map(page, resolver, path):
     return box
 
 
+async def radio_options(loc):
+    return await loc.evaluate(r"""e => {
+      const c = e.tagName === 'LABEL' ? e.control : e;
+      const radios = c?.type === 'radio' ? [c] : [...e.querySelectorAll('input[type=radio]')];
+      return radios.map(r => ({value:r.value, checked:r.checked,
+        label:[...r.labels].map(l => l.textContent.trim().replace(/\s+/g,' ')).filter(Boolean)[0] || r.value}));
+    }""")
+
+
 async def perform(page, resolver, action):
     if action.action == "navigate":
         response = await page.goto(action.value, wait_until="domcontentloaded", timeout=30_000)
         if response is None or not response.ok:
             raise Blocked("navigation failed", code="NAVIGATION", http_status=response.status if response else None)
         return
-    loc, spec = await resolver.resolve(page, action.target)
+    loc, spec = await resolver.resolve_action(page, action.target)
     if action.action == "click":
         # OSM submits directions via Enter in the destination field, not a Go button.
         if spec.submit_key:
@@ -156,6 +174,16 @@ async def perform(page, resolver, action):
         if tag == "select":
             await loc.select_option(label=action.value)
         else:
+            if tag not in {"label", "input"}:
+                options = await radio_options(loc)
+                matches = [o for o in options if o["label"].casefold() == action.value.casefold()]
+                if len(matches) != 1:
+                    raise Blocked("requested layer does not match one option", code="SELECTION_MISMATCH", count=len(matches))
+                label = loc.locator("label").filter(has_text=re.compile(r"^\s*" + re.escape(action.value) + r"\s*$", re.I)).filter(visible=True)
+                if await label.count() != 1:
+                    raise Blocked("layer label is ambiguous", code="LOCATOR_COUNT", count=await label.count())
+                await label.click()
+                return {"selected_label": matches[0]["label"]}
             value = await loc.evaluate("""e => {
               const c = e.tagName === 'LABEL' ? e.control : e;
               return c?.type === 'radio' ? c.value : null;

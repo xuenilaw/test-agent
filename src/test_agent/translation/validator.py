@@ -1,5 +1,6 @@
 """Deterministic plan gate: generic coverage, then optional route contract."""
 
+import re
 from test_agent.schemas.plan import TranslationPlan
 
 
@@ -58,7 +59,10 @@ def validate_route_contract(plan: TranslationPlan, contract: dict) -> list[str]:
                 (i for i, a in enumerate(step.actions) if a.action == "fill"), default=-1):
             errors.append("Request directions exactly once, after filling both cities.")
         routes = [c for c in step.checks if c.kind == "route_connects"]
-        if not any(all(city in str(c.value) for city in (contract["origin"], contract["destination"])) for c in routes):
+        endpoints = [[contract[key], *contract.get(key + "_aliases", [])]
+                     for key in ("origin", "destination")]
+        if not any(all(any(re.search(r"(?<!\w)" + re.escape(city) + r"(?!\w)", str(c.value), re.I)
+                           for city in names) for names in endpoints) for c in routes):
             errors.append("Route check must preserve both cities.")
     duration_step = next((s for s in plan.steps if s.source_step == contract["duration_step"]), None)
     duration = [c for c in duration_step.checks if c.kind == "duration_minutes"] if duration_step else []
@@ -86,7 +90,10 @@ def validate_plan(plan: TranslationPlan, case: dict, application_url: str,
                   contract: dict | None = None, known_targets: set[str] | None = None) -> list[str]:
     errors = validate_generic_plan(plan, case, application_url)
     if contract:
-        errors.extend(validate_route_contract(plan, contract))
+        if contract.get("type", "route") == "route":
+            errors.extend(validate_route_contract(plan, contract))
+        else:
+            errors.extend(validate_layer_contract(plan, contract))
     if known_targets is not None:
         for step in plan.steps:
             for kind, entries in (("action", step.actions), ("check", step.checks)):
@@ -96,4 +103,28 @@ def validate_plan(plan: TranslationPlan, case: dict, application_url: str,
         for item in plan.cleanup:
             if item.target not in known_targets:
                 errors.append(f"UNKNOWN_TARGET: cleanup target '{item.target}'")
+    return errors
+
+
+def validate_layer_contract(plan, contract):
+    errors = []
+    panel = next((s for s in plan.steps if s.source_step == contract["panel_step"]), None)
+    selected = next((s for s in plan.steps if s.source_step == contract["select_step"]), None)
+    if panel is None or not any(c.kind == "options_present" and c.target == "map layers panel"
+            and isinstance(c.value, list) and set(c.value) == set(contract["expected_options"])
+            and len(c.value) == len(contract["expected_options"]) for c in panel.checks):
+        errors.append("Layer panel check must preserve all expected options")
+    if panel is None or not any(a.action == "click" and a.target == "layers control" for a in panel.actions):
+        errors.append("Layer panel step must open layers control")
+    selections = [a for a in selected.actions if a.action == "select"] if selected else []
+    if len(selections) != 1 or selections[0].target != "map layer selector" or selections[0].value != contract["selected_layer"]:
+        errors.append("Layer select step must select exactly the required layer")
+    if selected is None or not any(c.kind == "selected" and c.target == "map layer selector"
+                                  and c.value == contract["selected_layer"] for c in selected.checks):
+        errors.append("Layer selection needs a selected assertion")
+    reset = [i for i,a in enumerate(plan.cleanup) if a.action == "select" and a.target == "map layer selector"
+             and a.value == contract["default_layer"]]
+    close = [i for i,a in enumerate(plan.cleanup) if a.action == "click" and a.target == "layers panel close button"]
+    if len(reset) != 1 or len(close) != 1 or reset[0] >= close[0]:
+        errors.append("Layer cleanup must reset default layer then close the panel")
     return errors
