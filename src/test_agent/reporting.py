@@ -358,6 +358,11 @@ class Report:
         else:
             text+='<p>'+esc(human(summary.get('vision_configuration','No route vision executed')))+'</p>'
         text+='<p>Route vision checks (separate from case verdicts): '+esc(' · '.join(f'{s}: {n}' for s,n in vision_counts.items()))+'</p>'
+        if (self.folder/'audit_analysis.md').is_file():
+            text+='<p>'+self.link(self.folder/'audit_analysis.md','AI audit analysis — suggestion, verify before acting')+'</p>'
+            analysis=read_json(self.folder/'audit_analysis.json')
+            from test_agent.audit_presentation import html_audit
+            text+=html_audit(analysis)
         text+='<h2>Case totals</h2><div class="metrics">'+''.join('<div class="metric">'+badge(status)+'<br><strong>'+esc(summary.get('totals',{}).get(status,0))+'</strong></div>' for status in ['PASSED','FAILED','BLOCKED'])+'</div>'
         if summary.get('reason'):text+='<p>'+esc(summary['reason'])+'</p>'
         if repeatability:

@@ -163,6 +163,7 @@ CSV 可用 Excel → Data → From Text/CSV，以 UTF-8 导入。每 case、acti
 
 这里 Test Result 对应 **Excel acceptance cases**，不是 136 个 Python unit tests；unit tests 仍在 Unit tests 阶段日志中。
 一个 case 包含多步，因此 Jenkins 显示的测试数量是「步骤 + Cleanup」，与 Excel case 数不同；重复执行的名称带 Run n。
+JUnit 现在在 Test suite 的 post/always 执行，UNSTABLE 的黄色显示在 Test suite；全局 Post Actions 只发布文件，不再因 JUnit 而变黄。
 
 | 原始 step 状态 | JUnit 表示 | 测试含义 |
 | --- | --- | --- |
@@ -198,7 +199,7 @@ uv run python -m test_agent package artifacts/suite-<id> --output-dir reports
 
 `junit` / `package` 也支持 repeat 目录。`reports/` 是专用输出，不放其他文件；解压证据请使用单独的下载目录。
 
-**Checkpoint：** 新 build 有 Test Result、Test Report，reports/ 下仅五个 artifact；OSM-002 能看到持续时间失败，未改变阈值。
+**Checkpoint：** 新 build 有 Test Result、Test Report，reports/ 下有五个基础 artifact；启用 audit/Jira 后另有分析与决策文件。OSM-002 能看到持续时间失败，未改变阈值。
 若没有入口，核对 HTML Publisher 安装、JUnit XML 路径和 Console Output 的 post 阶段；旧 build 不会自动补发新的展示。
 
 ### 本机证据目录与保留数量
@@ -297,7 +298,186 @@ docker compose -f ci/docker-compose.yml down --volumes
 | 下载后 evidence 链接失效 | 下载整个 suite 树并保留目录；Linux 原始绝对路径是运行记录，不能当 Mac 路径。 |
 | 无 Stage View | 确认 pipeline-stage-view 插件，先用 Console Output 阅读各 stage。 |
 
-**终点 checkpoint：** 你能说明 controller/agent，push Excel 后找到 build，下载 HTML/CSV，区分 UNSTABLE/FAILURE 并找到证据。Audit agent、Jenkins input 审批、Jira 是下一任务，本轮未接入。
+**基础 checkpoint：** 你能说明 controller/agent，push Excel 后找到 build，阅读 Test Result / Test Report，区分 UNSTABLE/FAILURE 并找到证据。下面接上审阅与 Jira。
+
+## 11. Audit analysis：让 AI 解释证据
+
+**做什么：** review、commit/push 后，Pipeline 的工作部分为 Setup → Unit tests → Test suite → Audit analysis。
+Audit analysis 只绑定 `wbs-anthropic-api-key`，使用 `ANTHROPIC_API_KEY`，不再绑定 GLM / OPENAI_* credentials。无需再装分析或 Jira plugin。
+`AUDIT_MODEL=claude-haiku-5-5` 同时控制 analyst 与截图观察，只有一个 provider/model。旧 `AUDIT_VISION_MODEL` 暂作兼容别名，新设置优先。
+Excel 翻译与 DOM healing 仍使用原来的 GLM；生产 route checker 仍是 Clef，本次只替换 audit。
+
+**为什么：** `audit.csv` 是记录；audit agent 才负责推理。Python 为每个 case（包括 PASSED）准备 dossier：Excel 原文、contract、plan、该 case 的 rows、结果摘要与截图目录。
+Claude Haiku 读取 dossier 并推理；需要图片时，它调用 `ask_screenshot(id, question, options)`，Python 用同一个 Haiku model 发起独立的截图观察请求。
+观察请求只收到中性问题、3–8 个选项（必须有 unclear）、输出 schema 和一张图，不收到 Excel 的 expected text、实际 test verdict 或图片文件名。
+这是同一模型的两个隔离上下文，不是 GLM → Claude 的模型委派；保留隔离是为避免用已知预期引导视觉答案。
+Claude **必须**调用 `submit_analysis` 提交结构化草稿，不能用普通文字 JSON 代替。该 tool 使用 `strict: true` 和由同一 Pydantic 模型生成的 schema；这个 tool 不创建 ticket。
+[Anthropic strict tools 文档](https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use) 和
+[兼容性与 schema 限制](https://platform.claude.com/docs/en/build-with-claude/structured-outputs)（2026-10-16 查阅）列出 Haiku 5.5 支持。
+API 不支持的长度、数字与数组上限放入 schema 的 description，仍由 Python 校验；字段结构、枚举、ID pattern、禁止额外字段保持一致。
+summary/title/explanation/观察文字/next step 过长时截短，不因文字长度丢掉有效分析。
+如果结构、枚举、ID 或证据校验失败，Python 返回 `is_error: true` 的 `tool_result`，仅含字段路径与错误类型，允许一次修正后的 `submit_analysis`。
+原始失败记录保留在 `dropped_findings`；`case_audits` 和顶层的 `repair_used` 记录是否用了修正。第二次仍失败则该 case 标为 unanalysed。
+所有 Excel、页面文字、图中内容、模型输出均视为不可信数据，不能当成指令。
+
+每 case 最多 5 次截图问题尝试、每 suite 最多 25 次，**被 guard 拒绝也计数**；拒绝答复会解释具体规则，例如需 3–8 个选项且包含 unclear。每 case 最多 12 个原生 Messages API analyst turns，另允许 1 个专用格式/证据修正 turn；没有网络自动重试。审阅一条 case 可能有多次 Haiku 请求，全部使用同一配置模型。
+PNG 使用现有 4 MiB 与 oversized-image guard，不重采图、不裁剪重跑；低于 0.90 的 Claude 自报 confidence 或 unclear 均为 uncertain，不能视为事实。
+截图目录包含每个 step screenshot 和 map crop；图片只进入独立的 Claude 观察请求，analyst 收到经过验证的文字观察。每次答复有 Q-… 编号，Python 校验引用是否真实存在且属于该 case。
+
+**你应该看到：** Test Report 有 **AI audit analysis — suggestion, verify before acting** 链接；Build Artifacts 另有：
+
+| 文件 | 读什么 |
+| --- | --- |
+| audit_analysis.md | 给人的摘要、likely cause + confidence、解释、替代原因、截图观察、下一步、建议 ticket、证据与 designed outcome |
+| audit_analysis.json | 同一分析、文字 dossier、真实截图问答、被丢弃的 finding 与原因、所用模型 |
+| audit_review.json | 已通过 Python 校验的候选 ticket 列表、attention_count、summary、不可用 banner 与 analysis SHA-256 |
+
+`software_bug`、`test_case_problem`、`test_tool_problem`、`environment_problem` 是 AI 的原因假设，不能替代原始 PASSED/FAILED/BLOCKED。
+OSM-002 可以保留 FAILED，同时分析认为「Hamburg → Munich 少于 3 小时」值得检查；不要自动改 Excel、放宽阈值，或因为测试设计为失败就伪装通过。
+PASSED case 也会审阅。若有与预期矛盾的 FAILED check 或可靠截图答案，显示 **⚠ possible false pass, please check**，但不会自动推荐 ticket。
+Python 能直接比对的截图矛盾目前包括选中 layer、route 起终点名称/别名和明显断线；更模糊的画面解释保留为 needs_human_review。
+
+**报告如何读：** 顶部例如 `Audited 3 cases: 2 no action, 1 needs your attention (1 ticket suggestion).`
+**Needs your attention** 只显示：全部 ticket suggestions、possible_false_pass、Claude 主动选择且解释具体原因的 needs_human_review，以及 FAILED/BLOCKED 的低 confidence finding。
+**No action needed** 默认折叠：中/高 confidence confirmed_pass，以及已解释且无需 ticket 的中/高 confidence FAILED/BLOCKED。失败不等于必须人工介入；原 case verdict 保持不变。
+一个 case 有多条 finding 时，顶部 case 数不重复计数，任一 attention finding 就归为 attention case；attention_count 则计 finding 数。
+HTML Test Report 使用相同分类；完整的替代原因、证据与截图问答可在 Markdown 查看。
+
+**如果不顺利：** invented row/screenshot/question、类别不安全或证据不足会进入修正流程；无法得到有效分析的 case 在 JSON 的 `case_audits` 中明确为 `unanalysed`。
+页面只出现一次 **AI audit unavailable. Test results are unchanged; read the report as usual. Reason: <code>**；没有逐 case 的 Python 人工 review 卡片。
+部分 case 失败时，其他 case 的有效 finding 仍可使用。`AUDIT_SCHEMA` / `FINDING_SCHEMA` 的 `field_errors` 仅保存字段名和 Pydantic 错误类型，不保存被拒绝的输入内容。
+文字模型失败、JSON 不合规或 timeout 时 `agent_unavailable: true`，仍保留测试报告，不使 build 因 audit 模型失败而变成 FAILURE。
+`VISION_HTTP` + status、VISION_CONFIG、VISION_LIMIT 是截图未知，不是产品 bug。确认 key/model 权限，但不要输出 key 或私有响应正文。
+
+## 12. Jira Cloud token 与 Jenkins credential
+
+**做什么：** 使用 [Atlassian API tokens](https://id.atlassian.com/manage-profile/security/api-tokens) 为自己的账号创建一个 API token，设置合理到期日。
+本项目使用站点 `https://lawxueni.atlassian.net` 和 project key `WBSFP`。本地学习的直连 Basic auth 使用账号 email + API token（不是登录密码）。
+选择适用于站点 Basic auth 的 token；带 scope 的 token可能需要 Atlassian gateway URL，不要把不同认证方式混用。
+
+Manage Jenkins → Credentials → System → Global credentials → Add Credentials：
+
+| 字段 | 值 |
+| --- | --- |
+| Kind | Username with password |
+| Username | Atlassian account email（只在 credential 中填写） |
+| Password | API token |
+| ID | wbs-jira |
+| Description | WBS Jira approval workflow（不填 token） |
+
+**为什么：** token 代表你的账号权限；账号需要 WBSFP 的 Browse/Create issues/Add comments/Create attachments 权限。
+用户没有的权限，token 也不会增加。email/token 不进 Git、报告或 Console Output；只在 Jira 发送阶段用 `withCredentials` 注入 `JIRA_EMAIL` / `JIRA_API_TOKEN`。
+站点 URL、project key 可以版本管理。Audit stage 没有 Jira credential，也没有写 Jira 的 tool。
+
+**Checkpoint：** Installed credentials 可见 ID wbs-jira；不要把 token 截图发给 reviewer。没有批准 ticket 时，流程根本不会读取这个 credential。
+
+**如果不顺利：** JIRA_AUTH（401/403）查 email/token、到期与权限；JIRA_CONFIG 查站点/project/issue types、approval hash 或 evidence；JIRA_HTTP + status 查 Jira 服务/项目配置；JIRA_TIMEOUT 查网络。
+错误只记录安全 code/status，不输出响应正文，不自动重试创建。
+
+## 13. Review tickets：人决定，默认不选
+
+**做什么：** Audit 有至少一个安全的 `recommend_ticket: true` finding，才进入 Review tickets。
+在 build 的 input 页面通过链接打开完整分析，再逐项勾选要创建的 finding（**默认全部 false**），点击 **Record decision**。
+每项显示 finding ID、case、likely cause + confidence、ticket type、title、next step、evidence rows 和 designed outcome。
+input 只列可批准的 ticket，并显示 attention items 数量与分析链接作为参考。possible false pass 和其他无 ticket 的 attention item 出现在 build description / Test Report；**不会单独暂停 build**。
+
+**为什么：** Pipeline 顶层用 `agent none`。Setup/测试/audit 在工作 Docker agent 内执行，结束后 `stash reports/` 并先发布报告。
+Review tickets 无 agent、无 executor、无 container：人考虑多久，都不占用测试机。输入完成后，Jira 阶段重新分配 agent、checkout 和 `unstash reports/`。
+这会复制 evidence.zip 等文件，是本地学习的简单实现；更大证据集可以将来改为外部 artifact storage。
+
+审批有 30 分钟 timeout；在 input 上 Abort、超时、全部不选，都**不发送任何 Jira 请求**，保留之前的 SUCCESS/UNSTABLE。
+`jira_decision.json` 记录 status、批准者、选中的 finding IDs、分析文件 SHA-256。发送前再次检查 hash 和 IDs，防止批准后分析被更换。
+没有 candidate 时跳过 input，并记录 not_required；模型不可用也不会凭空创建 ticket。
+
+**Checkpoint：** 等待时 Test Report 和 audit_analysis.md 已可阅读；Jenkins 没有 executor 被 input 占住。批准一个 finding 后才进入 Jira 发送。
+最终 Post Actions 再归档带 decision/results 的报告。等待期间不能用“没有 Jira ticket”判断失败，因为还没有授权发送。
+
+**如果不顺利：** 没有 input 先看 audit_review.json 的 candidates；不要为了出现审批而放宽证据规则。TRANSLATION_REJECTED、导航错误或 VISION_* 错误不能单独推荐 bug。
+若整条 build 在工作阶段失败，后续审批不会运行；先修最早的红色阶段。
+
+## 14. Jira 创建、去重和附件
+
+**做什么：** 只对批准的 finding 调用 REST API。Python 先通过 create-metadata 查询 WBSFP 可创建的 issue types：bug → Bug（若没有则 Task）；test_case_fix → Task。
+描述使用 Atlassian Document Format（ADF），模型文字只作为普通文本：Excel source action/expected、actual/reason、category、证据行、designed outcome、build/Test Report URL，另有 **AI analysis (suggestion, verify)**。
+截图从 evidence.zip 中按已验证的相对路径读取，上传 header 为 `X-Atlassian-Token: no-check`，不上传完整 trace。
+
+**为什么：** fingerprint label 来自 case/step、source action/expected、ticket type 的稳定散列，不使用会变化的模型 title 或 build number。
+使用新的 `POST /rest/api/3/search/jql` 查 WBSFP 同 label 且未完成的 issue；已有则添加本次 build 的 comment，不再创建新 issue。第二次运行也需要重新批准。
+无匹配才 create；同一 finding 最多附 4 张相关 step/map 图。每次类型选择、created/commented key、URL、附件数量和错误均写入 jira_results.json。
+
+**Checkpoint：** Build description 有 Jira URL；WBSFP ticket 带 wbs-test-agent、fingerprint、case ID labels，有截图和回到 Jenkins 的链接。
+重复 build 审批同一个问题后，原 ticket 多一条 comment。已完成的 ticket 不算 open，会允许新建一个用于重新发生的问题。
+Jira 搜索存在索引延迟；不并发构建、不盲目重试发送。若创建成功后附件失败，results 保留创建的 key；先检查该 ticket，再决定下一步。
+
+**如果不顺利：** Jira API/credential 错误标记该阶段与 build UNSTABLE，仍归档测试报告和部分结果。不能因为发送失败就把测试 case 状态改掉。
+Jira 请求超时可能发生在服务器已处理之后；没有自动重试，人工先检查 project 中的 label，避免重复。
+
+## 15. 本机自行测试 Claude-only audit（不会发 Jira）
+
+**准备：** 在本机 `.env` 中填写 `ANTHROPIC_API_KEY`，可选设置 `AUDIT_MODEL=claude-haiku-5-5`；不要把 key 粘贴到聊天或写进命令历史。
+只执行 audit-agent 不需要 OPENAI_* 或 OpenRouter key。需要能访问 api.anthropic.com，账号有该模型权限。
+
+**第一步，离线验证（零 API 调用）：**
+
+```bash
+cd /Users/xuenilaw/Documents/myProject/WBS
+uv run python -m unittest discover -s tests -p 'test_audit_agent.py' -v
+```
+
+**第二步，用现有 suite 做一次真实审阅：**
+
+```bash
+AUDIT_MODEL=claude-haiku-5-5 uv run python -m test_agent audit-agent artifacts/suite-20261016T085446352441Z
+open artifacts/suite-20261016T085446352441Z/audit_analysis.md
+```
+
+这条路径是已有演示 suite；也可换为另一个完整的 `artifacts/suite-...` 目录。命令只读取保存的测试证据，不重跑网页或翻译，但会把文字 dossier 和所需 PNG 发给 Anthropic、产生模型调用。
+会更新这个 suite 的 audit_analysis.json/.md 与 audit_review.json；不会改 results.json、case verdict 或阈值，不会创建 Jira ticket。
+本轮 Codex 不替你运行这个 live call，以便由你验证真实结果。
+
+**第三步，确认是真分析而非 fallback：**
+
+```bash
+uv run python - <<'PYTHON'
+import json
+from pathlib import Path
+p = Path('artifacts/suite-20261016T085446352441Z/audit_analysis.json')
+a = json.loads(p.read_text())
+print('Provider / model:', a['provider'], a['text_model'])
+print('Agent unavailable:', a['agent_unavailable'])
+print('Coverage / repairs:', a['case_audits'])
+print('Any repair used:', a['repair_used'])
+for f in a['findings']:
+    print(f['case_id'], f['likely_cause'], f['title'])
+print('Dropped findings / safe errors:', a['dropped_findings'])
+PYTHON
+```
+
+**Checkpoint：** provider 为 anthropic，analyst 与 screenshot model 都是配置的 Haiku；`agent_unavailable` 为 false，三条 case 都有证据支持的解释。
+看 Markdown 的分类、原因、下一步和 Q-* 截图观察是否合理；`case_audits` 三条都应为 analysed。预期 OSM-001/003 无需行动，OSM-002 有一条待批准的 ticket 建议；这只是验收期望，不是 Python 强制的模型答案。没有不可用 banner 才满足本轮 live acceptance。
+Console 会提示模型和 finding 数；出现不可用提示时，查看 dropped_findings 的 field_errors/repair_used/phase/error_class/provider_code/http_status。修正成功后保留最初的 dropped 诊断是正常的；请贴出 Markdown 和这些字段供 review。
+你可以把这些**安全诊断字段和分析内容**交给 Codex/Claude，不要提供 key。
+
+**如果不顺利：** VISION_CONFIG 查 Anthropic key；VISION_HTTP + 401/403 查权限，404 查 AUDIT_MODEL 是否可用，429 查限额；VISION_TIMEOUT 查网络；VISION_INCOMPLETE 查输出截断；VISION_TURN_LIMIT 表示触及一般 12-turn 上限；唯一额外 turn 仅用于已经触发的 submit_analysis 修正。
+不要自动反复重跑来挑一个好结果。保留失败输出，先看安全错误字段。Jenkins 读取 push 后的代码，本地可在 review/commit 前测试；Jenkins 验收仍需先 review 再 commit/push。
+
+### Jira 仅离线预览（默认不发送）
+
+```bash
+# 审阅已保存证据；只调用 Claude Haiku，不重跑浏览器、不调用 GLM
+uv run python -m test_agent audit-agent artifacts/suite-<id>
+# 把分析一起复制到 reports/
+uv run python -m test_agent package artifacts/suite-<id> --output-dir reports
+# IDs 必须是已验证、推荐 ticket 的 finding；默认与 --dry-run 相同，完全不发 HTTP
+uv run python -m test_agent jira create reports --approved F-OSM-002-1 --dry-run
+```
+
+**你应该看到：** jira_payloads.json 中是无认证信息的请求正文、JQL、附件路径；jira_results.json 标记 dry_run=true，没有 created/commented issue。
+离线预览不能查询 issue types，因此使用保守的 Task 名称；真正发送先发现元数据并记录实际选择（bug 可能改为 Bug）。测试用例修复始终选 Task。
+此文件准确展示本次预览准备的 ADF/labels/链接；没有把“未查询的元数据”伪装成已知。没有 candidate 时传 `--approved ''` 只得到空预览。
+
+只有明确提供 `--send` 才会发送；本机输入 `--approved` IDs 加 `--send` 就是该次操作的人工授权，Jenkins 则使用保存的 input 决策和 hash。
+本轮交付只运行一次授权的 live audit 和 Jira dry-run，不替你批准 ticket，不发送真实 issue/comment。review、commit/push 后再由你在 Jenkins 完成一次真实审批验收。
 
 ## 官方参考
 

@@ -132,6 +132,17 @@ def main(argv: list[str] | None = None) -> int:
                         help="Directory containing .env, cases/ and artifacts/ (default: current directory)")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser('clef-smoke',help='One text-only OpenRouter Decisions request (no images)')
+    analyst_parser = commands.add_parser('audit-agent',help='Read-only Claude Haiku audit with guarded screenshot questions')
+    analyst_parser.add_argument('folder',type=Path)
+    analyst_parser.add_argument('--unavailable',action='store_true',help='Record unanalysed cases without model requests (CI configuration failure)')
+    jira_parser = commands.add_parser('jira',help='Approval-gated Jira export (offline dry-run by default)')
+    jira_commands = jira_parser.add_subparsers(dest='jira_command',required=True)
+    jira_create = jira_commands.add_parser('create')
+    jira_create.add_argument('folder',type=Path)
+    jira_create.add_argument('--approved',required=True,help='Comma-separated finding IDs explicitly approved by the human')
+    jira_mode = jira_create.add_mutually_exclusive_group()
+    jira_mode.add_argument('--dry-run',action='store_true')
+    jira_mode.add_argument('--send',action='store_true',help='Send only explicitly approved, validated findings to Jira')
     report_parser=commands.add_parser('report',help='Build offline HTML from a saved suite or repeat folder')
     report_parser.add_argument('folder',type=Path)
     audit_parser=commands.add_parser('audit',help='Build spreadsheet-safe audit.csv from saved suite or repeat evidence')
@@ -195,6 +206,29 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument("--output-dir", type=Path)
     run_parser.add_argument("--skip-vision", action="store_true", help="Skip declared vision checks as BLOCKED for offline/dev runs")
     args = parser.parse_args(argv)
+    if args.command == 'audit-agent':
+        from test_agent.audit_agent import run_audit_agent, approval_preview
+        from test_agent.reporting import build_report
+        load_dotenv(args.project_dir.resolve()/'.env')
+        try:
+            async def unavailable(*unused):
+                raise ValueError('AUDIT_CONFIG')
+            analysis = asyncio.run(run_audit_agent(args.folder,analyst=unavailable if args.unavailable else None))
+            approval_preview(args.folder)
+            build_report(args.folder)
+            print('Saved audit_analysis.json and audit_analysis.md')
+            print(f"Audit model: {analysis['text_model']} (Anthropic); findings: {len(analysis['findings'])}; dropped: {len(analysis['dropped_findings'])}")
+            if analysis['agent_unavailable']:
+                print('AI audit unavailable. Test results are unchanged; read the report as usual. Inspect dropped_findings and case_audits for reason codes and field errors.')
+        except Exception:
+            print('AUDIT_UNAVAILABLE: inspect saved suite evidence; no tickets recommended')
+        return 0
+    if args.command == 'jira':
+        from test_agent.jira import create_tickets
+        load_dotenv(args.project_dir.resolve()/'.env')
+        result = create_tickets(args.folder,list(dict.fromkeys(i.strip() for i in args.approved.split(',') if i.strip())),send=args.send)
+        print(json.dumps(result,indent=2))
+        return 1 if result['errors'] else 0
     if args.command in {'report','repeat','audit','junit','package','prune'}:
         try:
             if args.command == 'prune':

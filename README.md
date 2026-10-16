@@ -589,3 +589,32 @@ Repeatability 表的 consistent 只表示各次**case status 相同**，不表�
 probability spread 列出每个问题/每个选项的 min/max、所选概率 min/max、choices，以及上游 provider/host；
 单独列出 step/status/reason 的变化。duration mean/min/max 使用 case execution_seconds，不包含翻译。
 同样截图上的 Clef 概率可重复，但真实页面每次的瓦片加载/画面不同，概率仍可能不同；报告保留变化，不重试求通过。
+
+## Audit agent → Jenkins approval → Jira
+
+`uv run python -m test_agent audit-agent artifacts/suite-<id>` 从现有 Excel/plan/results/audit rows 建立每 case dossier（包括 PASSED），Claude Haiku 负责全部 audit 推理；需要画面时，通过受限 tool 用同一 Haiku 模型在隔离上下文中读取单张 PNG。Audit 不调用 GLM。
+配置只需要 `ANTHROPIC_API_KEY` 和可选 `AUDIT_MODEL=claude-haiku-5-5`（同一模型用于分析和截图观察）。
+结果为 `audit_analysis.json` / `.md`；不重跑测试，不自动改变 verdict 或阈值。AI 推理只是建议；Python 校验引用、截图问答与 ticket 规则，校验失败允许一次有字段诊断的修正；不可用时只显示一个 banner，并在 JSON 标记 unanalysed，不使 build 因模型失败而中断。
+报告顶部只列需要行动的 finding；无须行动的分析默认折叠。只有有效 ticket 候选才触发 Jenkins 审批，所有 ticket 仍需人工批准。
+
+Jenkins 在无 executor/container 的 Review tickets input 中让人选择 finding（默认不选）；只有批准后才绑定 wbs-jira credential 发送。未批准、Abort、超时均不创建或评论。
+`jira_decision.json` 记录批准者/IDs/分析 hash，`jira_results.json` 记录 created/commented 链接与安全错误。
+
+```bash
+uv run python -m test_agent package artifacts/suite-<id> --output-dir reports
+uv run python -m test_agent jira create reports --approved F-OSM-002-1 --dry-run
+```
+
+Jira 默认离线 dry-run，写 `jira_payloads.json`，不进行 HTTP；实际发送必须显式 `--send` 与人工批准的 finding IDs。
+发送前发现 issue types，用稳定 fingerprint 搜索未完成 ticket（新 `/search/jql` endpoint），存在则评论本次 build，避免重复创建；附相关截图。
+Credential/token、审批页面、错误码和学习步骤见 [Jenkins guide](docs/ci/jenkins-guide.md)。
+
+自行测试 audit（本机现有演示 suite，不发送 Jira）：
+
+```bash
+uv run python -m unittest discover -s tests -p 'test_audit_agent.py' -v
+AUDIT_MODEL=claude-haiku-5-5 uv run python -m test_agent audit-agent artifacts/suite-20261016T085446352441Z
+open artifacts/suite-20261016T085446352441Z/audit_analysis.md
+```
+
+第二条命令会调用 Anthropic；在本机 `.env` 配好 key。核对 JSON 的 provider=anthropic、agent_unavailable=false，并确认 case_audits 三条都为 analysed；dropped_findings 会列字段错误和 repair_used。详细排查见 guide 第 15 节。

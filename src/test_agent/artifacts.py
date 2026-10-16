@@ -10,6 +10,8 @@ from test_agent.junit import build_junit
 from test_agent.reporting import build_report, read_json
 
 DOWNLOADS = ('report.html', 'audit.csv', 'junit.xml', 'summary.json', 'evidence.zip')
+EXTRA_DOWNLOADS = ('audit_analysis.json','audit_analysis.md','audit_review.json',
+                   'jira_decision.json','jira_payloads.json','jira_results.json')
 
 
 class EvidenceLinks(HTMLParser):
@@ -26,7 +28,7 @@ def package_reports(folder: Path, output: Path) -> Path:
     folder, output = folder.resolve(), output.resolve()
     if output == folder or output.is_relative_to(folder) or folder.is_relative_to(output):
         raise ValueError('Reports destination must be separate from the evidence folder')
-    if output.exists() and any(p.name not in DOWNLOADS or not p.is_file() or p.is_symlink() for p in output.iterdir()):
+    if output.exists() and any(p.name not in DOWNLOADS+EXTRA_DOWNLOADS or not p.is_file() or p.is_symlink() for p in output.iterdir()):
         raise ValueError('Reports destination contains unexpected files; choose a dedicated folder')
     build_report(folder)
     build_audit(folder)
@@ -35,6 +37,11 @@ def package_reports(folder: Path, output: Path) -> Path:
     output.mkdir(parents=True, exist_ok=True)
     for name in DOWNLOADS[:3]:
         shutil.copyfile(folder/name, output/name)
+    for name in EXTRA_DOWNLOADS:
+        if (folder/name).is_file():
+            shutil.copyfile(folder/name,output/name)
+        elif (output/name).exists():
+            (output/name).unlink()  # Don't keep an older suite's analysis/approval in a new package.
     repeat = read_json(folder/'repeatability.json')
     if repeat:
         import json
@@ -45,7 +52,7 @@ def package_reports(folder: Path, output: Path) -> Path:
         for path in sorted(folder.rglob('*')):
             if path.is_file() and not path.is_symlink() and path.resolve().is_relative_to(folder):
                 relative = path.relative_to(folder)
-                if str(relative) not in DOWNLOADS:
+                if str(relative) not in DOWNLOADS+EXTRA_DOWNLOADS:
                     archive.write(path, relative.as_posix())
     return output
 

@@ -120,9 +120,23 @@ class ClaudeVision:
                                                   "data": base64.b64encode(image).decode()}}
         if coordinate_image:
             image_block['transformations'] = {'oversized_image': 'error'}
-        body = {"model": self.model, "max_tokens": 2048, "system": instructions,
-                "messages": [{"role": "user", "content": [
-                    image_block, {"type": "text", "text": json.dumps({"output_schema": schema})}]}]}
+        reply = await self.request_message([{"role": "user", "content": [
+            image_block, {"type": "text", "text": json.dumps({"output_schema": schema})}]}], instructions)
+        blocks = reply.pop('blocks')
+        types = reply['block_types']
+        if reply['stop_reason'] != 'end_turn':
+            raise VisionError('INCOMPLETE', **reply)
+        if (not types or types[-1] != "text" or types.count("text") != 1
+                or any(t not in {"thinking", "redacted_thinking"} for t in types[:-1])
+                or not isinstance(blocks[-1].get("text"), str)):
+            raise VisionError("NOT_SINGLE_TEXT", **reply)
+        return {**reply, "content": blocks[-1]["text"]}
+
+    async def request_message(self, messages, instructions, *, tools=None, max_tokens=2048):
+        """Native Messages API shared by vision and the bounded Claude-only audit loop."""
+        body = {"model": self.model, "max_tokens": max_tokens, "system": instructions, "messages": messages}
+        if tools:
+            body['tools'] = tools
         request = Request("https://api.anthropic.com/v1/messages", data=json.dumps(body).encode(),
                           headers={"x-api-key": self.api_key, "anthropic-version": "2023-06-01",
                                    "Content-Type": "application/json"}, method="POST")
@@ -151,15 +165,8 @@ class ClaudeVision:
         meta["block_types"] = [b.get("type") if isinstance(b, dict) and b.get("type") in
             {"text", "thinking", "redacted_thinking", "tool_use", "server_tool_use"} else "unknown"
             for b in blocks] if isinstance(blocks, list) else []
-        if meta["stop_reason"] != "end_turn":
-            raise VisionError("INCOMPLETE", **meta)
-        types = meta["block_types"]
-        meta["thinking_present"] = any(t in {"thinking", "redacted_thinking"} for t in types)
-        if (not types or types[-1] != "text" or types.count("text") != 1
-                or any(t not in {"thinking", "redacted_thinking"} for t in types[:-1])
-                or not isinstance(blocks[-1].get("text"), str)):
-            raise VisionError("NOT_SINGLE_TEXT", **meta)
-        return {**meta, "content": blocks[-1]["text"]}
+        meta["thinking_present"] = any(t in {"thinking", "redacted_thinking"} for t in meta['block_types'])
+        return {**meta, 'blocks': blocks}
 
 
 def provider_from_env() -> VisionProvider:

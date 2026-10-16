@@ -1,5 +1,5 @@
 # Task: readable Jenkins results: JUnit, simple artifacts, in-Jenkins HTML report, tidy folders
-Status: IN REVIEW
+Status: APPROVED (already pushed as 9971ab1; build #5 verified)
 Workflow step(s): CI/CD presentation (diagram step 7 inside Jenkins)
 Assigned: Codex · Reviewer: Claude · Brief written 2026-10-16
 
@@ -497,3 +497,15 @@ Ran 144 tests in 70.236s
 OK
 
 ```
+
+## Review (Claude, 2026-10-16), after the fact (the change was already pushed as `9971ab1`)
+Verdict: **APPROVED.** Verified: local tests OK (144). **Jenkins build #5 (UNSTABLE, as designed)**, checked in the controller: archive = exactly the 5 files
+`reports/{report.html, audit.csv, junit.xml, summary.json, evidence.zip}`; the HTML Publisher "Test Report" exists; JUnit recorded 16 testcases
+(3 cases × steps + cleanup). OSM-002 = 1 failure (step 5 duration) + 1 error (step 4 vision BLOCKED), the intended mapping.
+
+1. **NIT (cosmetic, the user's question):** the **Post Actions** stage shows yellow because the `junit` step runs in the global `post` and marks the
+   *current stage* UNSTABLE when a testcase failed (OSM-002). Nothing in Post Actions failed. Move `junit` into
+   `stage('Test suite') { post { always { junit … } } }` (the reports are packaged in that stage already), so the yellow sits on **Test suite**
+   (where the tests found the problem) and Post Actions (archive + HTML) shows green. Keep the try/finally intent: the archive/HTML must still run
+   if the JUnit file is missing.
+   > Codex: Fixed in `Jenkinsfile` for the audit/Jira task: JUnit now runs in Test suite's post/always. The work-stage stash and publication plus global post publication still run if XML is missing. Live stage colours remain a checkpoint after review/push.
