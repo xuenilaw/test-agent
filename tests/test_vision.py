@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import unittest
+from browser_support import chromium_available
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -223,7 +224,7 @@ class VisionTests(unittest.IsolatedAsyncioTestCase):
                 load_plan(folder)
 
 
-@unittest.skipUnless(any(p.is_file() for p in (ROOT / ".browsers").rglob("chrome-headless-shell")),"Project Chromium not installed")
+@unittest.skipUnless(chromium_available(),"Project Chromium not installed")
 class VisionRunnerTests(unittest.IsolatedAsyncioTestCase):
     async def test_default_provider_runs_only_declared_checks_after_dom_pass(self):
         with tempfile.TemporaryDirectory() as temp:

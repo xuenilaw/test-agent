@@ -43,6 +43,16 @@ def esc(value):
     return html.escape(str(value if value is not None else '—'),quote=True)
 
 
+def short_text(value,limit):
+    text=' '.join(str(value if value is not None else '—').split())
+    return text if len(text)<=limit else text[:limit-1]+'…'
+
+
+def locator_label(source):
+    return {'human':'locator file','cache':'cache','healed':'healed (GLM)',
+            'vision':'vision (Claude)'}.get(source,source)
+
+
 def pretty(value):
     return '<pre>'+esc(json.dumps(value,ensure_ascii=False,indent=2,default=str))+'</pre>'
 
@@ -269,7 +279,15 @@ class Report:
         steps={s.get('source_step'):s for s in plan.get('steps',[])}
         for step in data.get('steps',[]):
             original=steps.get(step.get('source_step'),{})
-            text+='<h3>Step '+esc(step.get('source_step'))+' '+badge(step.get('status'))+'</h3>'
+            status=step.get('status')
+            label=badge(status)
+            borderline_check=next((c for c in step.get('checks',[]) if borderline(c)),None)
+            if status=='PASSED' and borderline_check:
+                label=check_badge(borderline_check)
+            text+='<details class="step"><summary>Step '+esc(step.get('source_step'))+' – '+esc(short_text(original.get('source_action'),100))+' '+label
+            if status!='PASSED' and step.get('reason'):
+                text+=' · '+esc(short_text(step['reason'],120))
+            text+='</summary>'
             text+='<table><tr><th>Source action</th><th>Expected result</th><th>Reason</th></tr><tr><td>'+esc(original.get('source_action'))+'</td><td>'+esc(original.get('source_expected'))+'</td><td>'+esc(step.get('reason'))+'</td></tr></table>'
             text+='<table><tr><th>Action / check</th><th>Status</th><th>Locator source</th><th>Expected / actual / reason</th></tr>'
             for kind,items in [('Action',step.get('actions',[])),('Check',step.get('checks',[]))]:
@@ -277,13 +295,20 @@ class Report:
                     status=check_badge(item) if kind=='Check' else badge(item.get('status'))
                     details='<p>'+esc(readable_item(item))+'</p>'
                     if item.get('reason'):details+='<p>Reason: '+esc(item['reason'])+'</p>'
-                    text+='<tr><td>'+esc(kind+' '+str(item.get('action',item.get('kind','')))+' · '+str(item.get('target','')))+'</td><td>'+status+'</td><td>'+esc(item.get('locator_source'))+'</td><td>'+details+technical(item)+'</td></tr>'
-            text+='</table>'+self.thumbnail(step.get('screenshot'),folder)
+                    text+='<tr><td>'+esc(kind+' '+str(item.get('action',item.get('kind','')))+' · '+str(item.get('target','')))+'</td><td>'+status+'</td><td>'+esc(locator_label(item.get('locator_source')))+'</td><td>'+details+technical(item)+'</td></tr>'
+            text+='</table><p class="muted">Locator source: locator file = configured locator; cache = saved locator; healed (GLM) = recovered DOM locator; vision (Claude) = screenshot click.</p>'+self.thumbnail(step.get('screenshot'),folder)
             for check in step.get('checks',[]):
                 if check.get('kind')=='route_geometry':
                     actual=check.get('actual',{})
                     text+='<h4>Vision evidence</h4><p>'+esc(vision_text(actual))+'</p>'
-        text+='<h3>Cleanup</h3><ul>'+''.join('<li>'+badge(item.get('status'))+' '+esc(readable_item(item))+(' · '+esc(item['reason']) if item.get('reason') else '')+'</li>' for item in data.get('cleanup',[]))+'</ul>'+technical(data.get('cleanup',[]))
+            text+='</details>'
+        cleanup=data.get('cleanup',[])
+        cleanup_status='PASSED' if cleanup and all(item.get('status')=='PASSED' for item in cleanup) else 'NOT_RUN'
+        for status in ['FAILED','BLOCKED','NOT_RUN']:
+            if any(item.get('status')==status for item in cleanup):
+                cleanup_status=status
+                break
+        text+='<details class="cleanup"><summary>Cleanup – '+str(len(cleanup))+' actions '+badge(cleanup_status)+'</summary><ul>'+''.join('<li>'+badge(item.get('status'))+' '+esc(readable_item(item))+(' · '+esc(item['reason']) if item.get('reason') else '')+'</li>' for item in cleanup)+'</ul>'+technical(cleanup)+'</details>'
         text+='<p>'+self.link(folder/'results.json','results.json')+' · '+self.link(folder/'trace.zip','trace.zip')+'</p></details>'
         return text
 

@@ -1,5 +1,9 @@
 # Test Agent：Playwright、GLM 与自然语言测试用例
 
+Docker/Jenkins CI：从 [中文学习指南](docs/ci/jenkins-guide.md) 开始，包含 credentials、Pipeline from SCM、Poll SCM 和报告下载。
+`suite` / `repeat` 自动写入 `audit.csv`；已有结果可用 `uv run python -m test_agent audit artifacts/suite-<id>`（或 repeat 目录）离线导出。
+HTML 的 locator source 显示 locator file / cache / healed (GLM) / vision (Claude)；CSV 保留 human / cache / healed / vision 原始值。
+
 今天只验证：打开页面 → 找到搜索框 → 输入 Hamburg → 断言输入值 → 截图 → 清理。
 这还不是路线搜索测试，也没有 AI 自愈或 Vision。
 
@@ -573,6 +577,7 @@ Case totals 是**用例最终状态**；另列 Route vision checks，避免 FAIL
 若通过的 vision check 有任一所选概率在阈值至阈值 + 0.03（含边界）之间，显示 PASSED (borderline) 和概率。
 这只是显示提醒，不改变 results.json 的状态或阈值。`report` 命令只重建 HTML，不执行测试或调用模型。
 展开每条 case 可看源步骤/预期、动作/断言、定位来源、实际值/概率、截图、cleanup 和 trace。
+每个步骤和 Cleanup 默认折叠；点击步骤行才展开表格和截图。步骤行显示简短动作、状态，未通过时附简短原因；完整文字保留在展开内容中。
 Known limitations 自动列出地图模型判断、layer tile 未视觉验证、前置条件只保留原文，以及上面的校准限制。
 
 Repeatability 表的 consistent 只表示各次**case status 相同**，不表示所有证据完全一致。

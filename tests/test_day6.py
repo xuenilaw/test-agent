@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import unittest
+from html.parser import HTMLParser
 from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import AsyncMock,patch
@@ -21,6 +22,25 @@ from test_agent.repeatability import summarize_repeats,run_repeat
 from test_agent.runner import run_case
 
 MALICIOUS='<script>alert(1)</script>'
+
+
+class DetailSummaries(HTMLParser):
+    def __init__(self,text):
+        super().__init__();self.nodes=[];self.stack=[];self.in_summary=False
+        self.feed(text)
+
+    def handle_starttag(self,tag,attrs):
+        if tag=='details':
+            node=dict(attrs=dict(attrs),summary='')
+            self.nodes.append(node);self.stack.append(node)
+        elif tag=='summary':self.in_summary=True
+
+    def handle_endtag(self,tag):
+        if tag=='summary':self.in_summary=False
+        elif tag=='details':self.stack.pop()
+
+    def handle_data(self,data):
+        if self.in_summary and self.stack:self.stack[-1]['summary']+=data
 
 
 def fixture_suite(root):
@@ -52,6 +72,55 @@ def fixture_suite(root):
 
 
 class Day6Tests(unittest.IsolatedAsyncioTestCase):
+    def test_steps_and_cleanup_are_collapsed_with_safe_short_summaries(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);fixture_suite(root)
+            folder=root/'run/CASE-1'
+            plan=json.loads((folder/'plan.json').read_text())
+            action=MALICIOUS+'\n '+('long action '*20)
+            plan['steps']=[dict(source_step=i,source_action=action,source_expected='Expected') for i in range(1,5)]
+            (folder/'plan.json').write_text(json.dumps(plan))
+            result=json.loads((folder/'results.json').read_text())
+            reason='Reason '+MALICIOUS+'\n '+('long reason '*20)
+            result['steps']=[dict(source_step=i,status=status,reason=reason,actions=[],checks=[],screenshot=None)
+                for i,status in enumerate(['PASSED','FAILED','BLOCKED','NOT_RUN'],1)]
+            result['cleanup']=[dict(action='click',target='Close',status='FAILED')]
+            (folder/'results.json').write_text(json.dumps(result))
+            before=(folder/'results.json').read_bytes()
+            text=build_report(root).read_text()
+            nodes=DetailSummaries(text).nodes
+            steps=[n for n in nodes if n['attrs'].get('class')=='step'][:4]
+            self.assertEqual(len(steps),4)
+            short_action=' '.join(action.split())[:99]+'…'
+            short_reason=' '.join(reason.split())[:119]+'…'
+            for i,(node,status) in enumerate(zip(steps,['PASSED','FAILED','BLOCKED','NOT_RUN']),1):
+                self.assertNotIn('open',node['attrs'])
+                expected=f'Step {i} – {short_action} {status}'
+                if status!='PASSED':expected+=' · '+short_reason
+                self.assertEqual(node['summary'],expected)
+                self.assertNotIn('\n',node['summary'])
+            cleanup=next(n for n in nodes if n['attrs'].get('class')=='cleanup')
+            self.assertNotIn('open',cleanup['attrs'])
+            self.assertEqual(cleanup['summary'],'Cleanup – 1 actions FAILED')
+            self.assertNotIn('<script>',text)
+            self.assertIn('&lt;script&gt;',text)
+            self.assertEqual((folder/'results.json').read_bytes(),before)
+
+    def test_collapsed_step_keeps_borderline_badge_and_cleanup_empty_is_not_run(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);fixture_suite(root)
+            path=root/'run/CASE-1/results.json';result=json.loads(path.read_text())
+            result['steps'][0]['checks'][0]['actual']['answers']['start_city']['probabilities']['Hamburg']=.86
+            result['cleanup']=[];path.write_text(json.dumps(result))
+            text=build_report(root).read_text();nodes=DetailSummaries(text).nodes
+            step=next(n for n in nodes if n['attrs'].get('class')=='step')
+            self.assertTrue(step['summary'].endswith('PASSED (borderline)'))
+            cleanup=next(n for n in nodes if n['attrs'].get('class')=='cleanup')
+            self.assertEqual(cleanup['summary'],'Cleanup – 0 actions NOT_RUN')
+            self.assertIn('Technical details',text)
+            self.assertIn('Vision evidence',text)
+            self.assertIn('data:image/jpeg;base64,',text)
+
     def test_readability_summary_page_type_and_human_formatting(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);runs=[fixture_suite(root/f'suite-{i}') for i in range(3)]

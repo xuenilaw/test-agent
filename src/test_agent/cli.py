@@ -133,6 +133,8 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser('clef-smoke',help='One text-only OpenRouter Decisions request (no images)')
     report_parser=commands.add_parser('report',help='Build offline HTML from a saved suite or repeat folder')
     report_parser.add_argument('folder',type=Path)
+    audit_parser=commands.add_parser('audit',help='Build spreadsheet-safe audit.csv from saved suite or repeat evidence')
+    audit_parser.add_argument('folder',type=Path)
     repeat_parser=commands.add_parser('repeat',help='Repeat execution with current validated plans, without translation')
     repeat_parser.add_argument('workbook',type=Path)
     repeat_parser.add_argument('--locators',type=Path,required=True)
@@ -183,8 +185,11 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument("--output-dir", type=Path)
     run_parser.add_argument("--skip-vision", action="store_true", help="Skip declared vision checks as BLOCKED for offline/dev runs")
     args = parser.parse_args(argv)
-    if args.command in {'report','repeat'}:
+    if args.command in {'report','repeat','audit'}:
         try:
+            if args.command=='audit':
+                from test_agent.audit import build_audit
+                print(build_audit(args.folder));return 0
             if args.command=='report':
                 from test_agent.reporting import build_report
                 print(build_report(args.folder));return 0

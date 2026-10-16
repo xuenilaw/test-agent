@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import unittest
+from browser_support import chromium_available
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -104,7 +105,7 @@ class FaultInputTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('Hamburg',json.dumps(body))
 
 
-@unittest.skipUnless(any(p.is_file() for p in (ROOT/'.browsers').rglob('chrome-headless-shell')),'Project Chromium missing')
+@unittest.skipUnless(chromium_available(),'Project Chromium missing')
 class FaultBrowserTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         os.environ.setdefault('PLAYWRIGHT_BROWSERS_PATH',str(ROOT/'.browsers'))

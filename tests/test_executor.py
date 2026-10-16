@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import unittest
+from browser_support import chromium_available
 from pathlib import Path
 from unittest.mock import patch
 from test_agent.cli import main
@@ -104,7 +105,7 @@ class InputAndDurationTests(unittest.TestCase):
                 load_plan(folder)
 
 
-@unittest.skipUnless(any(p.is_file() for p in (ROOT / ".browsers").rglob("chrome-headless-shell")),
+@unittest.skipUnless(chromium_available(),
                      "Project Chromium not installed: run playwright install chromium")
 class BrowserExecutorTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):

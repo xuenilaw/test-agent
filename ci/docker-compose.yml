@@ -1,0 +1,15 @@
+name: wbs-ci
+services:
+  jenkins:
+    build: ./jenkins
+    image: wbs-jenkins:2.580.1-1
+    # Local Docker Desktop learning only: root can access the mounted Docker socket.
+    user: "0:0"
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: "no"
+volumes:
+  jenkins_home:

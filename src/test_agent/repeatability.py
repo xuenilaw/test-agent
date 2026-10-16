@@ -87,4 +87,6 @@ async def run_repeat(workbook,locators,project_root,*,times=3,headed=False,outpu
         report['output_directory']=str(output.resolve())
         (output/'repeatability.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
         build_report(output)
+        from test_agent.audit import build_audit
+        build_audit(output)
     return report

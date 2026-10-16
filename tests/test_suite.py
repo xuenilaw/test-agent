@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+from browser_support import chromium_available
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch,AsyncMock
@@ -132,7 +133,7 @@ class SuiteTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(all(e['outcome_as_designed'] for e in summary['cases']))
 
 
-@unittest.skipUnless(any(p.is_file() for p in (ROOT/'.browsers').rglob('chrome-headless-shell')),'Project Chromium missing')
+@unittest.skipUnless(chromium_available(),'Project Chromium missing')
 class LayerBrowserTests(unittest.IsolatedAsyncioTestCase):
     async def test_layer_selected_cleanup_and_options_missing_extra(self):
         os.environ.setdefault('PLAYWRIGHT_BROWSERS_PATH',str(ROOT/'.browsers'))

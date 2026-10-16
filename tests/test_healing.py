@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import unittest
+from browser_support import chromium_available
 from pathlib import Path
 
 from playwright.async_api import async_playwright
@@ -32,7 +33,7 @@ class FakePlanner:
         return json.dumps(self.proposal)
 
 
-@unittest.skipUnless(any(p.is_file() for p in (ROOT/'.browsers').rglob('chrome-headless-shell')), 'Project Chromium missing')
+@unittest.skipUnless(chromium_available(), 'Project Chromium missing')
 class HealingTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()

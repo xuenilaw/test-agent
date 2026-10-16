@@ -128,6 +128,8 @@ async def run_suite(workbook: Path, locators: Path, project_root: Path, *, reuse
         summary['totals'][key]=sum(c.get(key,0) for c in summary['cases'])
     (output/'summary.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2))
     build_report(output)
+    from test_agent.audit import build_audit
+    build_audit(output)
     return summary
 
 
