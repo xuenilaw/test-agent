@@ -220,8 +220,9 @@ def main(argv: list[str] | None = None) -> int:
             build_report(args.folder)
             print('Saved audit_analysis.json and audit_analysis.md')
             print(f"Audit model: {analysis['text_model']} (Anthropic); findings: {len(analysis['findings'])}; dropped: {len(analysis['dropped_findings'])}")
-            if analysis['agent_unavailable']:
-                print('AI audit unavailable. Test results are unchanged; read the report as usual. Inspect dropped_findings and case_audits for reason codes and field errors.')
+            print(preview['summary'])
+            if preview['banner']:
+                print(preview['banner'])
         except Exception:
             print('AUDIT_UNAVAILABLE: inspect saved suite evidence; no tickets recommended')
         return 0

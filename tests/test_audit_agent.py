@@ -416,7 +416,106 @@ class AuditAgentTests(unittest.IsolatedAsyncioTestCase):
             view=presentation(a)
             self.assertEqual(view['unanalysed_count'],1)
             self.assertEqual(view['attention_count'],1)
-            self.assertEqual(html_audit(a).count('AI audit unavailable.'),1)
+            self.assertNotIn('AI audit unavailable.',html_audit(a))
+            self.assertIn('AI audit analysed 2 of 3 cases',html_audit(a))
+
+
+    async def test_unused_screenshot_ids_strip_without_weakening_claim_guards(self):
+        from test_agent.audit_validation import validate_submission
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);audit_fixture(root);d=dossiers_from_suite(root)['CASE-2']
+            d['screenshots']=[dict(screenshot_id='S-CASE-2-'+str(i),step=1) for i in range(1,4)]
+            qs=[dict(question_id='Q-'+str(i),case_id='CASE-2',screenshot_id='S-CASE-2-'+str(i),
+                     answered=True,status='certain') for i in range(1,3)]
+            f=finding(d,cause='test_case_problem',ticket=True)
+            f.update(evidence_questions=['Q-1','Q-2'],evidence_screenshots=['S-CASE-2-1','S-CASE-2-2','S-CASE-2-3'],
+                     screenshot_observations='Observed selected layer from Q-1 and Q-2.')
+            logs=[]
+            _,kept,drops=validate_submission(dict(summary='Checked.',findings=[f]),d,qs,normalizations=logs)
+            self.assertEqual(drops,[])
+            self.assertEqual(kept[0]['evidence_screenshots'],['S-CASE-2-1','S-CASE-2-2'])
+            self.assertEqual(logs,[dict(case_id='CASE-2',finding_id=f['finding_id'],stripped_screenshot_ids=['S-CASE-2-3'])])
+            for field in ['screenshot_observations','explanation']:
+                bad={**f,field:'A continuous route is visible in S-CASE-2-3.'}
+                _,kept,drops=validate_submission(dict(summary='Checked.',findings=[bad]),d,qs)
+                self.assertEqual(kept,[])
+                self.assertEqual(drops[0]['reason'],'UNOBSERVED_SCREENSHOT_CLAIM')
+                self.assertEqual(drops[0]['unobserved_screenshot_ids'],['S-CASE-2-3'])
+            f['evidence_screenshots'].append('S-foreign')
+            _,kept,drops=validate_submission(dict(summary='Checked.',findings=[f]),d,qs)
+            self.assertEqual(kept,[])
+            self.assertEqual(drops[0]['reason'],'UNKNOWN_OR_FOREIGN_EVIDENCE')
+
+    async def test_native_partial_audit_retains_ticket_after_failed_sibling_repair(self):
+        from test_agent.audit_presentation import presentation,html_audit
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);audit_fixture(root);provider=FakeAuditVision();repair_results=[]
+            async def request(messages,instructions,**kwargs):
+                self.assertIn('List in evidence_screenshots only the screenshots you asked about.',instructions)
+                d=json.loads(messages[0]['content'])['dossier'];turn=len(messages)//2
+                if turn==0:
+                    name='ask_screenshot';args=dict(screenshot_id=d['screenshots'][0]['screenshot_id'],
+                        question='Which layer is selected?',options=['Standard','Topo','unclear'])
+                else:
+                    name='submit_analysis';f=finding(d,cause='test_case_problem' if d['status']=='FAILED' else
+                        'confirmed_pass' if d['status']=='PASSED' else 'environment_problem',ticket=d['status']=='FAILED')
+                    f.update(evidence_questions=['Q-'+d['case_id']+'-1'],evidence_screenshots=[d['screenshots'][0]['screenshot_id']])
+                    bad={**f,'finding_id':f['finding_id']+'-bad','explanation':d['screenshots'][-1]['screenshot_id']+' shows a continuous line.'}
+                    if d['case_id']=='CASE-3':items=[f]
+                    elif d['case_id']=='CASE-2' and turn==1:items=[f,bad]
+                    else:items=[bad]
+                    args=dict(summary='Evidence reviewed.',findings=items)
+                    if turn==2:
+                        error=json.loads(messages[-1]['content'][0]['content']);repair_results.append(error)
+                        self.assertEqual(error['unobserved_screenshots'],[dict(finding_id=bad['finding_id'],
+                            screenshot_ids=[d['screenshots'][-1]['screenshot_id']])])
+                        self.assertIn('ask_screenshot first, or remove the id',error['rule'])
+                return dict(model='fake-haiku',stop_reason='tool_use',blocks=[dict(type='tool_use',
+                    id=name+'-'+str(turn),name=name,input=args)])
+            provider.request_message=AsyncMock(side_effect=request)
+            async def native(d,q):
+                d['screenshots'].append({**d['screenshots'][0],'screenshot_id':'S-'+d['case_id']+'-extra'})
+                return await claude_analyze(d,q)
+            a=await run_audit_agent(root,vision=provider,analyst=native)
+            self.assertEqual(a['availability'],'partial')
+            self.assertFalse(a['agent_unavailable'])
+            self.assertEqual([f['case_id'] for f in a['findings']],['CASE-2','CASE-3'])
+            self.assertEqual(len(repair_results),2)
+            self.assertTrue(any(d['reason']=='AUDIT_REPAIR_FAILED' and d['phase']=='output_validation'
+                                and 'provider_code' not in d for d in a['dropped_findings']))
+            self.assertNotIn('VISION_VALIDATION_FAILED',json.dumps(a))
+            view=presentation(a);preview=approval_preview(root)
+            self.assertIn('AI audit analysed 2 of 3 cases; CASE-1 unanalysed (UNOBSERVED_SCREENSHOT_CLAIM)',view['banner'])
+            self.assertNotIn('unavailable',view['banner'])
+            self.assertEqual([c['finding_id'] for c in preview['candidates']],['F-CASE-2-1'])
+            self.assertIn('AI audit analysed 2 of 3 cases',(root/'audit_analysis.md').read_text())
+            self.assertIn('AI audit analysed 2 of 3 cases',html_audit(a))
+            # Real approval metadata, not availability, drives the Jenkins when condition.
+            pipeline=Path('Jenkinsfile').read_text()
+            for name in ['Review tickets','Record decision and Jira']:
+                stage=pipeline.split("stage('"+name+"')",1)[1].split('steps {',1)[0]
+                self.assertIn('expression { !review.candidates.isEmpty() }',stage)
+
+
+    async def test_repair_can_ask_about_a_missing_screenshot_before_resubmitting(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);audit_fixture(root);d=dossiers_from_suite(root)['CASE-3']
+            provider=FakeAuditVision();questions=ScreenshotQuestions(root,{'CASE-3':d},provider)
+            sid=d['screenshots'][0]['screenshot_id'];f=finding(d,cause='environment_problem')
+            f.update(evidence_screenshots=[sid],screenshot_observations=sid+' shows the selected layer.')
+            corrected={**f,'evidence_questions':['Q-CASE-3-1']}
+            def call(i,name,args):return dict(model='fake-haiku',stop_reason='tool_use',blocks=[
+                dict(type='tool_use',id=str(i),name=name,input=args)])
+            provider.request_message=AsyncMock(side_effect=[
+                call(0,'submit_analysis',dict(summary='Review.',findings=[f])),
+                call(1,'ask_screenshot',dict(screenshot_id=sid,question='Which layer is selected?',options=['Standard','Topo','unclear'])),
+                call(2,'submit_analysis',dict(summary='Reviewed observed image.',findings=[corrected]))])
+            result=json.loads(await claude_analyze(d,questions))
+            self.assertEqual(len(result['findings']),1)
+            self.assertEqual(provider.request_message.await_count,3)
+            self.assertEqual(questions.total,1)
+            self.assertTrue(questions.repairs['CASE-3'])
+            self.assertTrue(questions.questions[0]['answered'])
 
 
 class AuditCliTests(unittest.TestCase):
@@ -458,3 +557,18 @@ class AuditCliTests(unittest.TestCase):
             message='private response')],dropped_findings=[])),
             'Anthropic credential rejected (403): update `wbs-anthropic-api-key`')
         self.assertEqual(credential_warning(dict(questions=[dict(code='VISION_CONFIG',http_status=401)])), '')
+
+
+    def test_partial_cli_reports_coverage_and_keeps_a_ticket_candidate(self):
+        with tempfile.TemporaryDirectory() as temp:
+            suite=Path(temp)/'suite-fixture';audit_fixture(suite)
+            async def partial(d,q):
+                if d['case_id']=='CASE-1':return json.dumps(dict(summary='No valid analysis.',findings=[]))
+                return await fake_analyst(d,q)
+            a=asyncio.run(run_audit_agent(suite,analyst=partial,vision=FakeAuditVision()))
+            console=io.StringIO()
+            with patch('test_agent.audit_agent.run_audit_agent',new=AsyncMock(return_value=a)),contextlib.redirect_stdout(console):
+                self.assertEqual(main(['--project-dir',temp,'audit-agent',str(suite)]),0)
+            self.assertIn('AI audit analysed 2 of 3 cases; CASE-1 unanalysed (AUDIT_SCHEMA)',console.getvalue())
+            self.assertNotIn('AI audit unavailable',console.getvalue())
+            self.assertEqual(len(json.loads((suite/'audit_review.json').read_text())['candidates']),1)

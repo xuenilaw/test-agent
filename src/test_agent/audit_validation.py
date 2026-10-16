@@ -4,6 +4,24 @@ from pydantic import ValidationError
 from test_agent.schemas.audit_analysis import Finding, Alternative, AnalysisEnvelope
 
 
+class AuditRepairFailed(ValueError):
+    """The corrected audit submission still contains invalid findings."""
+
+
+def screenshot_support(finding, dossier, questions):
+    cited = {q['screenshot_id'] for q in questions if q['case_id']==dossier['case_id']
+             and q.get('answered') and q['question_id'] in finding.evidence_questions}
+    catalogue = {s['screenshot_id'] for s in dossier['screenshots']}
+    unobserved = catalogue-cited
+    text = finding.screenshot_observations+' '+finding.explanation
+    # Whole IDs only: S-5 must not match S-5-map or S-50.
+    claims = sorted(s for s in unobserved if re.search(
+        r'(?<![A-Za-z0-9_-])'+re.escape(s)+r'(?![A-Za-z0-9_-])', text, re.I))
+    if finding.screenshot_observations.strip() and not cited:
+        claims = sorted(set(claims) | (set(finding.evidence_screenshots) & catalogue))
+    return cited, claims
+
+
 def validate_finding(finding: Finding, dossier, questions):
     f = finding.model_dump()
     rows = {r['row_id']: r for r in dossier['rows']}
@@ -19,8 +37,11 @@ def validate_finding(finding: Finding, dossier, questions):
         return 'UNANSWERED_OR_INVENTED_QUESTION'
     if not f['evidence_rows'] and not f['evidence_questions']:
         return 'NO_OBSERVED_EVIDENCE'
-    if f['screenshot_observations'] and not f['evidence_questions']:
+    observed, claims = screenshot_support(finding,dossier,questions)
+    if claims or (f['screenshot_observations'].strip() and not observed):
         return 'UNOBSERVED_SCREENSHOT_CLAIM'
+    if not set(f['evidence_screenshots']) <= observed:
+        return 'UNOBSERVED_SCREENSHOT_REFERENCE'
     selected = [rows[i] for i in f['evidence_rows']]
     cited = [answered[i] for i in f['evidence_questions']]
     if any(q['status'] != 'certain' for q in cited) and f['confidence'] == 'high':
@@ -62,7 +83,7 @@ def field_errors(exc, prefix=()):
             for error in exc.errors(include_input=False,include_context=False,include_url=False)]
 
 
-def validate_submission(payload, dossier, questions, known_ids=()):
+def validate_submission(payload, dossier, questions, known_ids=(), *, normalizations=None):
     drops, accepted, ids = [], [], set(known_ids)
     case_id = dossier['case_id']
     try:
@@ -76,12 +97,24 @@ def validate_submission(payload, dossier, questions, known_ids=()):
             drops.append(dict(finding_id='item-'+str(index),case_id=case_id,reason='FINDING_SCHEMA',
                               field_errors=field_errors(exc,('findings',index))))
             continue
+        observed, claims = screenshot_support(finding,dossier,questions)
+        stripped = [sid for sid in finding.evidence_screenshots if sid not in observed]
+        catalogue = {shot['screenshot_id'] for shot in dossier['screenshots']}
+        # Never strip invented/foreign IDs, or hide an explicit unsupported claim.
+        if not claims and set(stripped) <= catalogue and not (finding.screenshot_observations.strip() and not observed):
+            finding = finding.model_copy(update={'evidence_screenshots':
+                [sid for sid in finding.evidence_screenshots if sid in observed]})
+        else:
+            stripped = []
         error = validate_finding(finding,dossier,questions)
         if finding.finding_id in ids:
             error = 'DUPLICATE_FINDING_ID'
         if error:
             drops.append(dict(finding_id=finding.finding_id,case_id=case_id,reason=error,
-                              field_errors=[dict(field=f'findings.{index}',type=error)]))
+                              field_errors=[dict(field=f'findings.{index}',type=error)],
+                              **({'unobserved_screenshot_ids':claims} if error=='UNOBSERVED_SCREENSHOT_CLAIM' else {})))
         else:
             accepted.append(finding.model_dump()); ids.add(finding.finding_id)
+            if stripped and normalizations is not None:
+                normalizations.append(dict(case_id=case_id,finding_id=finding.finding_id,stripped_screenshot_ids=stripped))
     return envelope.summary, accepted, drops

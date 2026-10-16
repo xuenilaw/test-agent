@@ -146,6 +146,10 @@ pipeline {
             }
         }
         stage('Record decision and Jira') {
+            when {
+                beforeAgent true
+                expression { !review.candidates.isEmpty() }
+            }
             agent {
                 docker {
                     image 'mcr.microsoft.com/playwright/python:v1.63.0-noble'

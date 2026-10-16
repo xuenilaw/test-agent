@@ -331,11 +331,17 @@ Claude **必须**调用 `submit_analysis` 提交结构化草稿，不能用普�
 API 不支持的长度、数字与数组上限放入 schema 的 description，仍由 Python 校验；字段结构、枚举、ID pattern、禁止额外字段保持一致。
 summary/title/explanation/观察文字/next step 过长时截短，不因文字长度丢掉有效分析。
 如果结构、枚举、ID 或证据校验失败，Python 返回 `is_error: true` 的 `tool_result`，仅含字段路径与错误类型，允许一次修正后的 `submit_analysis`。
-原始失败记录保留在 `dropped_findings`；`case_audits` 和顶层的 `repair_used` 记录是否用了修正。第二次仍失败则该 case 标为 unanalysed。
+原始失败记录保留在 `dropped_findings`；`case_audits` 和顶层的 `repair_used` 记录是否用了修正。修正仍失败时只丢弃无效 finding；此前已经通过规则的同 case finding 仍保留，只有没有任何有效 finding 的 case 才标为 unanalysed。
 所有 Excel、页面文字、图中内容、模型输出均视为不可信数据，不能当成指令。
 
 每 case 最多 5 次截图问题尝试、每 suite 最多 25 次，**被 guard 拒绝也计数**；拒绝答复会解释具体规则，例如需 3–8 个选项且包含 unclear。每 case 最多 12 个原生 Messages API analyst turns，另允许 1 个专用格式/证据修正 turn；没有网络自动重试。审阅一条 case 可能有多次 Haiku 请求，全部使用同一配置模型。
 PNG 使用现有 4 MiB 与 oversized-image guard，不重采图、不裁剪重跑；低于 0.90 的 Claude 自报 confidence 或 unclear 均为 uncertain，不能视为事实。
+`evidence_screenshots` 只能列出已经询问、得到答复且在该 finding 的 `evidence_questions` 中引用的图片。
+若多列了本 case 的未观察图片 ID，却没有在 explanation / screenshot_observations 中声称它显示了什么，Python 会移除多余 ID，并在 JSON 的 `normalizations` 中记录 finding ID 与 `stripped_screenshot_ids`，不丢掉有效分析。
+若文字明确提到未观察图片 ID，或没有任何观察问答却填了截图观察文字，只丢弃该 finding，repair 会列出具体 ID，要求先 `ask_screenshot` 再引用，或移除 ID 及无证据的画面描述。
+修正可先补截图问题、再提交一次 corrected `submit_analysis`，仍受 5/25 问题尝试数、13 个 analyst turns 和每 case timeout 约束；不添加第二次 corrected submission。
+不存在或其他 case 的 ID 仍会被拒绝，不会通过“移除多余引用”来隐藏。
+
 截图目录包含每个 step screenshot 和 map crop；图片只进入独立的 Claude 观察请求，analyst 收到经过验证的文字观察。每次答复有 Q-… 编号，Python 校验引用是否真实存在且属于该 case。
 
 **你应该看到：** Test Report 有 **AI audit analysis — suggestion, verify before acting** 链接；Build Artifacts 另有：
@@ -358,9 +364,11 @@ Python 能直接比对的截图矛盾目前包括选中 layer、route 起终点�
 HTML Test Report 使用相同分类；完整的替代原因、证据与截图问答可在 Markdown 查看。
 
 **如果不顺利：** invented row/screenshot/question、类别不安全或证据不足会进入修正流程；无法得到有效分析的 case 在 JSON 的 `case_audits` 中明确为 `unanalysed`。
-页面只出现一次 **AI audit unavailable. Test results are unchanged; read the report as usual. Reason: <code>**；没有逐 case 的 Python 人工 review 卡片。
+有部分 case 成功时，Console、build description、Markdown 与 HTML 显示例如 **AI audit analysed 2 of 3 cases; OSM-001 unanalysed (UNOBSERVED_SCREENSHOT_CLAIM)**。
+只有零 case 成功才显示 **AI audit unavailable. Test results are unchanged; read the report as usual. Reason: <code>**；没有逐 case 的 Python 人工 review 卡片。
+`availability` 为 complete / partial / unavailable；`agent_unavailable` 只在零 case 成功时为 true。`case_audits` 仍逐 case 明确覆盖状态。
 部分 case 失败时，其他 case 的有效 finding 仍可使用。`AUDIT_SCHEMA` / `FINDING_SCHEMA` 的 `field_errors` 仅保存字段名和 Pydantic 错误类型，不保存被拒绝的输入内容。
-文字模型失败、JSON 不合规或 timeout 时 `agent_unavailable: true`，仍保留测试报告，不使 build 因 audit 模型失败而变成 FAILURE。
+单个 case 的文字模型、JSON 或 timeout 错误不会让其他有效 case 不可用；`AUDIT_REPAIR_FAILED` 属于 output_validation，不再标成 VISION_VALIDATION_FAILED。零 case 成功才有 `agent_unavailable: true`，仍保留测试报告，不使 build 因 audit 模型失败而变成 FAILURE。
 `VISION_HTTP` + status、VISION_CONFIG、VISION_LIMIT 是截图未知，不是产品 bug。确认 key/model 权限，但不要输出 key 或私有响应正文。
 
 ## 12. Jira Cloud token 与 Jenkins credential
@@ -401,7 +409,9 @@ Review tickets 无 agent、无 executor、无 container：人考虑多久，都�
 
 审批有 30 分钟 timeout；在 input 上 Abort、超时、全部不选，都**不发送任何 Jira 请求**，保留之前的 SUCCESS/UNSTABLE。
 `jira_decision.json` 记录 status、批准者、选中的 finding IDs、分析文件 SHA-256。发送前再次检查 hash 和 IDs，防止批准后分析被更换。
-没有 candidate 时跳过 input，并记录 not_required；模型不可用也不会凭空创建 ticket。
+partial audit 只要有一个通过规则的 ticket candidate，仍进入 Review tickets；不以 availability / agent_unavailable 决定是否审批。
+没有 candidate 时，Review tickets 与 Record decision and Jira **都跳过**；后者在分配 Docker agent 之前检查条件，不再为了空决定启动 container，也不生成 jira_decision.json。
+有 candidate 但人工全部拒绝 / 超时时，仍记录决定，不发送 Jira 请求。模型不可用不会凭空创建 ticket。
 
 **Checkpoint：** credential 更新且 JSON 插件安装完成后，Audit analysis 应正常结束；有已验证的 ticket suggestion 时 Review tickets 暂停，默认不勾选，人工勾选后点击 Record decision（部分 UI 显示 Proceed）。等待时 Test Report 和 audit_analysis.md 已可阅读；Jenkins 没有 executor 被 input 占住。批准一个 finding 后才进入 Jira 发送。
 最终 Post Actions 再归档带 decision/results 的报告。等待期间不能用“没有 Jira ticket”判断失败，因为还没有授权发送。
@@ -458,9 +468,11 @@ from pathlib import Path
 p = Path('artifacts/suite-20261016T085446352441Z/audit_analysis.json')
 a = json.loads(p.read_text())
 print('Provider / model:', a['provider'], a['text_model'])
+print('Availability:', a['availability'])
 print('Agent unavailable:', a['agent_unavailable'])
 print('Coverage / repairs:', a['case_audits'])
 print('Any repair used:', a['repair_used'])
+print('Stripped screenshot references:', a['normalizations'])
 for f in a['findings']:
     print(f['case_id'], f['likely_cause'], f['title'])
 print('Dropped findings / safe errors:', a['dropped_findings'])

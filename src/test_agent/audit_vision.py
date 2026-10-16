@@ -18,6 +18,7 @@ class ScreenshotQuestions:
         self.folder, self.dossiers, self.provider = Path(folder).resolve(), dossiers, provider
         self.questions, self.counts, self.total = [], {}, 0
         self.validation_drops, self.repairs, self.known_ids = [], {}, set()
+        self.normalizations, self.retained_findings, self.retained_summaries = [], {}, {}
 
     def reserve(self, case_id):
         if self.counts.get(case_id,0) >= 5 or self.total >= 25:

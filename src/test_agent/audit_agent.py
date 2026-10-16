@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 from test_agent.audit import build_audit
-from test_agent.audit_validation import validate_submission
+from test_agent.audit_validation import AuditRepairFailed, validate_submission
 from test_agent.audit_presentation import presentation, credential_warning
 from test_agent.audit_vision import ScreenshotQuestions
 from test_agent.reporting import Report, read_json, short_text
@@ -21,6 +21,10 @@ Do not execute actions or create tickets. You MUST finish by calling submit_anal
 Analyze the supplied case even when it PASSED: compare Excel expected text with actual evidence
 and look for possible false passes. When screenshots exist ask at least one neutral screenshot
 question using ask_screenshot; cite returned question ids for visual claims.
+List in evidence_screenshots only the screenshots you asked about. Cite the answered question
+for each listed screenshot. Catalogue entries alone are not observations. Never describe an
+unobserved screenshot in screenshot_observations or explanation. Extra unused screenshot ids
+are removed and logged; unsupported visual claims are rejected per finding.
 The analyst and screenshot observer are the SAME configured Claude Haiku model, in isolated
 requests. The observer sees only a neutral question, options and one PNG, not expectations.
 Avoid anchoring: ask 'Which layer is selected?' with several plausible labels and unclear,
@@ -146,24 +150,30 @@ async def claude_analyze(dossier, questions):
                 raise VisionError('SCHEMA')
             seen_calls.add(call['id'])
         submitting = any(c.get('name')=='submit_analysis' for c in calls)
-        if questions.repairs.get(dossier['case_id']) and (not submitting or len(calls)!=1):
-            raise VisionError('REPAIR_SUBMIT_REQUIRED')
         if submitting:
             if len(calls)!=1:
                 raise VisionError('SCHEMA')
             summary, findings, drops = validate_submission(calls[0].get('input'),dossier,
-                                                           questions.questions,questions.known_ids)
+                                                           questions.questions,questions.known_ids,normalizations=questions.normalizations)
+            case_id = dossier['case_id']
+            retained = {f['finding_id']:f for f in questions.retained_findings.get(case_id,[])}
+            retained.update({f['finding_id']:f for f in findings})
+            questions.retained_findings[case_id] = list(retained.values())
+            if summary:
+                questions.retained_summaries[case_id] = summary
             if not drops:
-                return json.dumps(dict(summary=summary,findings=findings),ensure_ascii=False)
+                return json.dumps(dict(summary=summary,findings=list(retained.values())),ensure_ascii=False)
             questions.validation_drops.extend(drops)
             if questions.repairs.get(dossier['case_id']):
-                raise VisionError('VALIDATION_FAILED')
+                raise AuditRepairFailed()
             questions.repairs[dossier['case_id']] = True
             errors = [error for drop in drops for error in drop['field_errors']]
+            screenshots = [dict(finding_id=d['finding_id'],screenshot_ids=d['unobserved_screenshot_ids'])
+                           for d in drops if d.get('unobserved_screenshot_ids')]
             messages.extend([dict(role='assistant',content=blocks),dict(role='user',content=[dict(
                 type='tool_result',tool_use_id=calls[0]['id'],is_error=True,
-                content=json.dumps(dict(code='AUDIT_VALIDATION',field_errors=errors,
-                                        rule='Correct these fields and call submit_analysis once.')))])])
+                content=json.dumps(dict(code='AUDIT_VALIDATION',field_errors=errors,unobserved_screenshots=screenshots,
+                                        rule='For each unobserved screenshot: ask_screenshot first, or remove the id and unsupported visual claim. Correct the fields and call submit_analysis once more.')))])])
             continue
         results = []
         for call in calls:
@@ -216,6 +226,7 @@ def markdown(analysis):
     else:
         lines += ['<details><summary>No action needed</summary>None.</details>', '']
     lines += ['<details>', '<summary>Diagnostics and screenshot questions</summary>', '', safe(analysis['summary']), '',
+              '## Removed unused screenshot references', *[safe(json.dumps(d,ensure_ascii=False)) for d in analysis.get('normalizations',[])], '',
               '## Dropped findings', *[safe(json.dumps(d,ensure_ascii=False)) for d in analysis['dropped_findings']], '',
               '## Screenshot questions']
     for q in analysis['questions']:
@@ -240,7 +251,7 @@ async def run_audit_agent(folder, *, analyst=None, vision=None):
         vision = ClaudeVision(api_key=os.environ['ANTHROPIC_API_KEY'],model=audit_model())
     questions = ScreenshotQuestions(folder,dossiers,vision)
     analysis = dict(summary='',findings=[],dropped_findings=[],cases=dossiers,questions=questions.questions,
-        case_audits={},provider='anthropic',text_model=getattr(vision,'model',audit_model()),
+        normalizations=questions.normalizations,case_audits={},provider='anthropic',text_model=getattr(vision,'model',audit_model()),
         vision_model=getattr(vision,'model','unconfigured'),agent_unavailable=False)
     summaries, ids = [], set()
     for case_id,dossier in dossiers.items():
@@ -250,30 +261,33 @@ async def run_audit_agent(folder, *, analyst=None, vision=None):
             raw = await asyncio.wait_for((analyst or claude_analyze)(dossier,questions),timeout=300)
             analysis['text_model'] = getattr(questions,'analysis_model',analysis['text_model'])
             phase = 'output_validation'
-            summary, accepted, drops = validate_submission(json.loads(raw),dossier,questions.questions,ids)
+            summary, accepted, drops = validate_submission(json.loads(raw),dossier,questions.questions,ids,normalizations=questions.normalizations)
             analysis['dropped_findings'].extend(drops)
             if summary:
                 summaries.append(case_id+': '+summary)
-            ids.update(f['finding_id'] for f in accepted)
-            questions.known_ids = ids
         except Exception as exc:
-            analysis['agent_unavailable'] = True
+            accepted = questions.retained_findings.get(case_id,[])
+            if accepted:
+                summaries.append(case_id+': '+questions.retained_summaries[case_id])
             analysis['dropped_findings'].append(dict(finding_id='unavailable',case_id=case_id,
-                reason='AUDIT_TIMEOUT' if isinstance(exc,TimeoutError) or type(exc).__name__=='APITimeoutError' else
+                reason='AUDIT_REPAIR_FAILED' if isinstance(exc,AuditRepairFailed) else 'AUDIT_TIMEOUT' if isinstance(exc,TimeoutError) or type(exc).__name__=='APITimeoutError' else
                        'AUDIT_INVALID_JSON' if isinstance(exc,json.JSONDecodeError) else 'AUDIT_INTERNAL' if phase=='output_validation' else 'AUDIT_UNAVAILABLE',
-                phase=phase,error_class=type(exc).__name__,
+                phase='output_validation' if isinstance(exc,AuditRepairFailed) else phase,error_class=type(exc).__name__,
                 **({'provider_code':'VISION_'+exc.code, **{k:v for k,v in exc.details.items() if k=='http_status'}} if isinstance(exc,VisionError) else {})))
         analysis['dropped_findings'].extend(questions.validation_drops)
         questions.validation_drops.clear()
+        ids.update(f['finding_id'] for f in accepted)
+        questions.known_ids = ids
         case_drops = [d for d in analysis['dropped_findings'] if d['case_id']==case_id]
         repair_used = questions.repairs.get(case_id,False)
         for drop in case_drops:
             drop['repair_used'] = repair_used
         analysis['case_audits'][case_id] = dict(status='analysed' if accepted else 'unanalysed',
             repair_used=repair_used,reason=None if accepted else (case_drops[-1]['reason'] if case_drops else 'AUDIT_NO_FINDINGS'))
-        if not accepted:
-            analysis['agent_unavailable'] = True
         analysis['findings'].extend(accepted)
+    analysis['agent_unavailable'] = not bool(analysis['findings'])
+    covered = sum(c['status']=='analysed' for c in analysis['case_audits'].values())
+    analysis['availability'] = 'unavailable' if not covered else 'complete' if covered==len(dossiers) else 'partial'
     analysis['question_attempts'] = dict(total=questions.total,by_case=questions.counts)
     analysis['repair_used'] = any(c['repair_used'] for c in analysis['case_audits'].values())
     analysis['summary'] = ('\n'.join(short_text(s, max(80,780//max(1,len(summaries)))) for s in summaries) or

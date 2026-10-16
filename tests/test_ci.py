@@ -92,3 +92,11 @@ class JenkinsSandboxTests(unittest.TestCase):
         for text in ['new groovy.json.JsonSlurperClassic()', 'new File("reports/audit_review.json")',
                      'new java.io.File("x")', '"command".execute()', 'Jenkins.instance', 'new GroovyShell()']:
             with self.subTest(text=text):self.assertTrue(self.violations(text))
+
+
+    def test_no_candidates_skip_jira_before_allocating_its_docker_agent(self):
+        pipeline=(Path(__file__).resolve().parents[1]/'Jenkinsfile').read_text()
+        jira=pipeline.split("stage('Record decision and Jira')",1)[1].split('steps {',1)[0]
+        self.assertIn('beforeAgent true',jira)
+        self.assertIn('expression { !review.candidates.isEmpty() }',jira)
+        self.assertLess(jira.index('when {'),jira.index('agent {'))

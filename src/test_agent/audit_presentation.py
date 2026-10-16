@@ -12,15 +12,20 @@ def presentation(analysis):
     covered = {f['case_id'] for f in attention+quiet}
     attention_cases = {f['case_id'] for f in attention}
     tickets = sum(f['recommend_ticket'] for f in attention)
-    summary = (f'Audited {len(covered)} cases: {len(covered-attention_cases)} no action, '
+    summary = (f'Audited {len(covered)} '+('case' if len(covered)==1 else 'cases')+f': {len(covered-attention_cases)} no action, '
                f'{len(attention_cases)} needs your attention ({tickets} ticket suggestion'+('' if tickets==1 else 's')+').')
     missing = len(cases)-len(covered)
     if missing:
         summary += f' {missing} unanalysed.'
-    reasons = sorted({d.get('reason','AUDIT_UNAVAILABLE') for d in analysis.get('case_audits',{}).values()
-                      if d['status']=='unanalysed'})
-    banner = ('AI audit unavailable. Test results are unchanged; read the report as usual. Reason: '+
-              ', '.join(reasons or ['AUDIT_UNAVAILABLE'])) if missing or analysis.get('agent_unavailable') else ''
+    unanalysed = [case_id+' unanalysed ('+str(analysis.get('case_audits',{}).get(case_id,{}).get('reason') or 'AUDIT_UNAVAILABLE')+')'
+                  for case_id in cases if case_id not in covered]
+    if covered and missing:
+        banner = f'AI audit analysed {len(covered)} of {len(cases)} cases; '+', '.join(unanalysed)+'.'
+    elif not covered:
+        banner = ('AI audit unavailable. Test results are unchanged; read the report as usual. Reason: '+
+                  (', '.join(unanalysed) or 'AUDIT_UNAVAILABLE'))
+    else:
+        banner = ''
     return dict(summary=summary,attention=attention,no_action=quiet,attention_count=len(attention),
                 ticket_count=tickets,unanalysed_count=missing,banner=banner)
 

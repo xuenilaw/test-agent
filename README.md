@@ -594,7 +594,7 @@ probability spread 列出每个问题/每个选项的 min/max、所选概率 min
 
 `uv run python -m test_agent audit-agent artifacts/suite-<id>` 从现有 Excel/plan/results/audit rows 建立每 case dossier（包括 PASSED），Claude Haiku 负责全部 audit 推理；需要画面时，通过受限 tool 用同一 Haiku 模型在隔离上下文中读取单张 PNG。Audit 不调用 GLM。
 配置只需要 `ANTHROPIC_API_KEY` 和可选 `AUDIT_MODEL=claude-haiku-5-5`（同一模型用于分析和截图观察）。
-结果为 `audit_analysis.json` / `.md`；不重跑测试，不自动改变 verdict 或阈值。AI 推理只是建议；Python 校验引用、截图问答与 ticket 规则，校验失败允许一次有字段诊断的修正；不可用时只显示一个 banner，并在 JSON 标记 unanalysed，不使 build 因模型失败而中断。
+结果为 `audit_analysis.json` / `.md`；不重跑测试，不自动改变 verdict 或阈值。AI 推理只是建议；Python 校验引用、截图问答与 ticket 规则，校验失败允许一次有字段诊断的修正；多余但未声称画面内容的 screenshot ID 会移除并记录 stripped_screenshot_ids；部分成功时显示逐 case 覆盖和原因，零 case 成功才显示 unavailable banner，并在 JSON 标记 unanalysed，不使 build 因模型失败而中断。
 报告顶部只列需要行动的 finding；无须行动的分析默认折叠。只有有效 ticket 候选才触发 Jenkins 审批，所有 ticket 仍需人工批准。
 
 Jenkins 在无 executor/container 的 Review tickets input 中让人选择 finding（默认不选）；只有批准后才绑定 wbs-jira credential 发送。未批准、Abort、超时均不创建或评论。
