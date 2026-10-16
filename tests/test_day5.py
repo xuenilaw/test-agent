@@ -127,7 +127,8 @@ class FaultBrowserTests(unittest.IsolatedAsyncioTestCase):
         async def intercept(route):
             await route.fulfill(status=200,content_type='text/html',body=body)
         return await run_case(self.folder,self.path,ROOT,output_root=self.root/'runs',route_handler=intercept,
-            vision_provider=provider,timeout=150,faults=[fault] if fault else [],locator_planner=planner or FakePlanner())
+            # Also bounds screenshot capture; 150 ms is unreliable on a loaded CI agent.
+            vision_provider=provider,timeout=2_000,faults=[fault] if fault else [],locator_planner=planner or FakePlanner())
 
     async def test_normal_resolution_then_failed_heal_can_fall_back_once(self):
         self.specs['layers control']['name']='Obsolete Layers'

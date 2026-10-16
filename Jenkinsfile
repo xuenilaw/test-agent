@@ -35,7 +35,7 @@ pipeline {
             }
         }
         stage('Unit tests') {
-            steps { sh 'uv run python -m unittest discover -s tests' }
+            steps { sh 'uv run python -m unittest discover -s tests -v' }
         }
         stage('Test suite') {
             steps {

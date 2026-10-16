@@ -194,6 +194,7 @@ docker compose -f ci/docker-compose.yml down --volumes
 | Docker socket permission | 确认 Desktop running、socket 挂载和本地学习用 user: "0:0"；`docker compose -f ci/docker-compose.yml exec jenkins docker version` 应有 Client/Server。不 chmod 全机 socket。 |
 | Pull/metadata 超时 | 先 `docker pull mcr.microsoft.com/playwright/python:v1.63.0-noble`，查 Desktop 网络/VPN/proxy。若长期没有 Pulling 输出，也可能是 docker-credential-desktop 挂起；本次验证使用临时匿名配置下载公开镜像，未改用户配置。可让 Codex帮助定位，不直接清空 keychain 或重置 Docker。恢复后重新 build，不删除 volume。 |
 | Browser executable 不存在 | Playwright tag 必须与 uv.lock 同版本，环境变量指向 /ms-playwright；不可使用 Mac .browsers。 |
+| Unit tests 本机通过、CI 偶发失败 | 读 Console Output 最后完整的 traceback 和 result，不能只看顶部测试名。build #3 的 vision-click 测试在点击前返回 VISION_INTERNAL；该 fixture 原来的 150 ms browser timeout 也限制截图，怀疑在 Docker 负载下过短，现改为 2 秒。没有放宽断言或增加重试；若再次失败，保留完整 traceback。修复须 commit/push 后 Jenkins checkout 才能取到。 |
 | uv sync --locked 失败 | 查 Python/network/lock；不在 CI 用 uv lock 临时改依赖。开发环境修正并 review，再更新匹配 image。 |
 | Credential 缺失/401/403 | 对照第 4 步核对 ID/scope/key/余额；不用 echo 调试。Git token 和模型 key 不能互换。 |
 | OSM 503 / blank / timeout | 看 fault、step reason/code、截图，分清注入与真实外部服务问题。保留证据再手动重建，不用自动重试掩盖失败。 |
