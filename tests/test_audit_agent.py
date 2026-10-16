@@ -431,3 +431,30 @@ class AuditCliTests(unittest.TestCase):
             self.assertEqual(result['findings'],[])
             self.assertEqual(result['questions'],[])
             self.assertEqual(json.loads((suite/'audit_review.json').read_text())['candidates'],[])
+
+
+    def test_auth_rejection_is_explicit_in_console_and_review_metadata(self):
+        for status in [401,403,429]:
+            with self.subTest(status=status),tempfile.TemporaryDirectory() as temp:
+                suite=Path(temp)/'suite-fixture';audit_fixture(suite);console=io.StringIO()
+                with patch.dict(os.environ,{'ANTHROPIC_API_KEY':'fake-secret'},clear=True),patch(
+                        'test_agent.verification.vision_providers.ClaudeVision.request_message',
+                        new=AsyncMock(side_effect=VisionError('HTTP',http_status=status))),contextlib.redirect_stdout(console):
+                    self.assertEqual(main(['--project-dir',temp,'audit-agent',str(suite)]),0)
+                preview=json.loads((suite/'audit_review.json').read_text())
+                expected=f'Anthropic credential rejected ({status}): update `wbs-anthropic-api-key`'
+                if status in {401,403}:
+                    self.assertEqual(preview['credential_warning'],expected)
+                    self.assertIn(expected,console.getvalue())
+                else:
+                    self.assertEqual(preview['credential_warning'],'')
+                    self.assertNotIn('Anthropic credential rejected',console.getvalue())
+                self.assertEqual(preview['candidates'],[])
+                self.assertNotIn('fake-secret',console.getvalue()+json.dumps(preview))
+
+    def test_auth_note_covers_blind_image_rejections_without_echoing_messages(self):
+        from test_agent.audit_presentation import credential_warning
+        self.assertEqual(credential_warning(dict(questions=[dict(code='VISION_HTTP',http_status=403,
+            message='private response')],dropped_findings=[])),
+            'Anthropic credential rejected (403): update `wbs-anthropic-api-key`')
+        self.assertEqual(credential_warning(dict(questions=[dict(code='VISION_CONFIG',http_status=401)])), '')

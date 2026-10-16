@@ -214,7 +214,9 @@ def main(argv: list[str] | None = None) -> int:
             async def unavailable(*unused):
                 raise ValueError('AUDIT_CONFIG')
             analysis = asyncio.run(run_audit_agent(args.folder,analyst=unavailable if args.unavailable else None))
-            approval_preview(args.folder)
+            preview = approval_preview(args.folder)
+            if preview['credential_warning']:
+                print(preview['credential_warning'])
             build_report(args.folder)
             print('Saved audit_analysis.json and audit_analysis.md')
             print(f"Audit model: {analysis['text_model']} (Anthropic); findings: {len(analysis['findings'])}; dropped: {len(analysis['dropped_findings'])}")

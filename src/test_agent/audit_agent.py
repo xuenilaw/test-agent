@@ -9,7 +9,7 @@ from pathlib import Path
 
 from test_agent.audit import build_audit
 from test_agent.audit_validation import validate_submission
-from test_agent.audit_presentation import presentation
+from test_agent.audit_presentation import presentation, credential_warning
 from test_agent.audit_vision import ScreenshotQuestions
 from test_agent.reporting import Report, read_json, short_text
 from test_agent.schemas.audit_analysis import submission_schema
@@ -287,7 +287,7 @@ def approval_preview(folder):
     folder = Path(folder)
     analysis = read_json(folder/'audit_analysis.json')
     view = presentation(analysis)
-    result = dict(summary=view['summary'],attention_count=view['attention_count'],ticket_count=view['ticket_count'],
+    result = dict(credential_warning=credential_warning(analysis),summary=view['summary'],attention_count=view['attention_count'],ticket_count=view['ticket_count'],
                   banner=view['banner'],attention_details=[f"{f['case_id']}: {f['likely_cause']} ({f['confidence']})"
                       for f in view['attention']],analysis_sha256=hashlib.sha256((folder/'audit_analysis.json').read_bytes()).hexdigest(),
                   possible_false_passes=[f['finding_id'] for f in analysis.get('findings',[]) if f['likely_cause']=='possible_false_pass'],

@@ -95,9 +95,13 @@ pipeline {
                             }
                             def packageCode = sh(returnStatus: true, script: 'uv run python ci/prepare_reports.py')
                             if (packageCode == 0 && fileExists('reports/audit_review.json')) {
-                                review = new groovy.json.JsonSlurperClassic().parseText(readFile('reports/audit_review.json'))
+                                review = readJSON(file: 'reports/audit_review.json', returnPojo: true)
                                 currentBuild.description = review.summary + (review.attention_details ? ' ' + review.attention_details.join('; ') : '')
                                 if (review.banner) { currentBuild.description += ' ' + review.banner }
+                                if (review.credential_warning) {
+                                    echo review.credential_warning
+                                    currentBuild.description += ' ' + review.credential_warning
+                                }
                                 decision.analysis_sha256 = review.analysis_sha256
                             }
                         }
@@ -154,7 +158,7 @@ pipeline {
                 checkout scm
                 unstash 'reports'
                 script {
-                    writeFile file: 'reports/jira_decision.json', text: groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(decision))
+                    writeJSON file: 'reports/jira_decision.json', json: decision, pretty: 2
                     if (!decision.approved.isEmpty()) {
                         catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE', catchInterruptions: false) {
                             sh '''
@@ -172,7 +176,7 @@ pipeline {
                             }
                         }
                         if (fileExists('reports/jira_results.json')) {
-                            def jira = new groovy.json.JsonSlurperClassic().parseText(readFile('reports/jira_results.json'))
+                            def jira = readJSON(file: 'reports/jira_results.json', returnPojo: true)
                             currentBuild.description = (currentBuild.description ?: '') + ' · ' + jira.issues.collect { it.url }.join(' · ')
                         }
                     }

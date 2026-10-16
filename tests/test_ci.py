@@ -1,6 +1,7 @@
 """CI result classification, independently of Jenkins and live providers."""
 import importlib.util
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -65,3 +66,29 @@ class CIResultTests(unittest.TestCase):
             self.assertEqual(module.build_result(0,root),'FAILURE')
             path.write_text('<testsuites/>')
             self.assertEqual(module.build_result(0,root),'FAILURE')
+
+
+class JenkinsSandboxTests(unittest.TestCase):
+    # Regression guard for known restricted APIs, not a substitute for runtime validation.
+    restricted = [r'\bJsonSlurper\w*\b', r'\bgroovy\.json\.', r'\bnew\s+(?:java\.io\.)?File\b',
+                  r'\.\s*execute\s*\(', r'\bJenkins\.(?:instance|getInstance)', r'\bGroovyShell\b']
+
+    def violations(self, text):
+        return [pattern for pattern in self.restricted if re.search(pattern,text)]
+
+    def test_pipeline_uses_pinned_sandbox_safe_json_steps(self):
+        root=Path(__file__).resolve().parents[1]
+        pipeline=(root/'Jenkinsfile').read_text()
+        self.assertEqual(self.violations(pipeline),[])
+        self.assertIn("readJSON(file: 'reports/audit_review.json', returnPojo: true)",pipeline)
+        self.assertIn("readJSON(file: 'reports/jira_results.json', returnPojo: true)",pipeline)
+        self.assertIn("writeJSON file: 'reports/jira_decision.json', json: decision",pipeline)
+        self.assertIn('echo review.credential_warning',pipeline)
+        self.assertIn("currentBuild.description += ' ' + review.credential_warning",pipeline)
+        self.assertIn('pipeline-utility-steps:3.810.va_7672d206740',
+                      (root/'ci/jenkins/plugins.txt').read_text().splitlines())
+
+    def test_guard_catches_restricted_parsing_files_and_processes(self):
+        for text in ['new groovy.json.JsonSlurperClassic()', 'new File("reports/audit_review.json")',
+                     'new java.io.File("x")', '"command".execute()', 'Jenkins.instance', 'new GroovyShell()']:
+            with self.subTest(text=text):self.assertTrue(self.violations(text))

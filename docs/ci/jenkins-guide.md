@@ -69,7 +69,7 @@ docker compose -f ci/docker-compose.yml logs --tail=80 jenkins
 docker compose -f ci/docker-compose.yml exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
 ```
 
-只粘贴到自己的 Unlock Jenkins 页，不发到聊天。Dockerfile 已预装 Pipeline、Git、Docker Pipeline、Credentials Binding、Pipeline Stage View 和 HTML Publisher（固定 429）；JUnit 由依赖带入。
+只粘贴到自己的 Unlock Jenkins 页，不发到聊天。Dockerfile 已预装 Pipeline、Git、Docker Pipeline、Credentials Binding、Pipeline Stage View 和 HTML Publisher（固定 429）、Pipeline Utility Steps（固定 `3.810.va_7672d206740`）；JUnit 由依赖带入。
 若出现插件选择页，选 **Select plugins to install**；已安装项不必重复安装。然后创建自己的管理员账号，保存本地 Jenkins URL。
 
 **为什么：** 插件支持 pipeline、Docker agent 和 withCredentials；所需 Docker Pipeline 的 ID 是 `docker-workflow`，不必装 Docker cloud plugin。
@@ -78,7 +78,7 @@ docker compose -f ci/docker-compose.yml exec jenkins cat /var/jenkins_home/secre
 
 **如果不顺利：** 查看日志中的 failed dependency。`plugins.txt` 固定直接插件版本，传递依赖由 plugin manager 解析；未来升级时一并 review controller 和插件，不盲目改为 latest。
 
-### 已有 controller：应用新的报告插件和设置
+### 已有 controller：应用新的报告 / JSON 插件和设置
 
 **做什么：** 本轮修改 review、commit/push 后，在 Mac 仓库执行（先等运行中的 build 结束）：
 
@@ -95,7 +95,17 @@ docker compose -f ci/docker-compose.yml ps
 这允许报告内嵌 CSS 和 `data:` 缩略图，仍阻止脚本；报告本身没有脚本。**这是 controller 范围的设置，会影响其他归档页面，只适用于这台可信仓库的本地学习 Jenkins。**
 共享或 production server 保持默认 CSP，下载 HTML 在本机打开。不要为了报告增加 `script-src` 或关闭 sandbox。
 
-**你应该看到：** Manage Jenkins → Plugins → Installed plugins 有 HTML Publisher；新 build 出现 Test Report。若报告无样式/图片，核对容器启动的 JAVA_OPTS，不能只修改 Jenkinsfile。
+**你应该看到：** Manage Jenkins → Plugins → Installed plugins 有 HTML Publisher 和 Pipeline Utility Steps；新 build 出现 Test Report。若报告无样式/图片，核对容器启动的 JAVA_OPTS，不能只修改 Jenkinsfile。
+
+### Pipeline Groovy sandbox（build #6/#7 的原因）
+
+Sandbox 会限制 Jenkinsfile 中可调用的 Groovy API，避免脚本直接操作 controller 文件或进程。
+日志出现 `RejectedAccessException: Scripts not permitted to use ...` 表示脚本在运行时被 sandbox 拦截，Declarative linter 通过也不能证明这些调用可执行。
+
+本项目使用 Pipeline Utility Steps 的 `readJSON(..., returnPojo: true)` 和 `writeJSON` 读写审批 / Jira JSON，避免 `JsonSlurperClassic` / `JsonOutput`，无需手动 Script Approval。
+`returnPojo: true` 返回普通 Map/List，可跨 pipeline checkpoint 使用；[官方步骤说明](https://www.jenkins.io/doc/pipeline/steps/pipeline-utility-steps/) 与 [固定版本及最低 Jenkins 版本](https://updates.jenkins.io/download/plugins/pipeline-utility-steps/) 可供核对。
+review、commit/push 后，先执行上面的 controller **build + up --force-recreate** 命令安装新插件，再 Build Now；仅拉取 Jenkinsfile 不会安装插件。
+若出现 `No such DSL method 'readJSON'` / `'writeJSON'`，确认插件已安装并已完成重启。
 
 ## 4. Credentials：CI 不使用 .env
 
@@ -118,6 +128,10 @@ VISION_PROVIDER=clef 和 VISION_MODEL=cloudflare/clef 是 Jenkinsfile 中的普�
 **你应该看到：** 五项 Secret text，以及私有仓库的 GitHub credential，只显示 ID。
 
 **如果不顺利：** Could not find credentials entry 查 ID/scope；401/403 查权限、endpoint、余额。不要分享含 key 的完整日志。
+
+**Anthropic 401/403（build #6/#7）：** Console 与 build description 会明确显示，例如 `Anthropic credential rejected (401): update wbs-anthropic-api-key`（实际提示中的 ID 带反引号）。
+进入 Manage Jenkins → Credentials → System → Global credentials → `wbs-anthropic-api-key` → Update，保留 Kind **Secret text** 和原 ID，点击 Change Secret 后粘贴本机 `.env` 中可用的 `ANTHROPIC_API_KEY` 的值，去掉引号、空格与换行，再 Save。
+这是 Jenkins 中的独立副本，修改本机 `.env` 不会同步过去；不需要把 key 发给 Codex / Claude。429 只表示限流，不会被提示为 credential rejected。
 
 ## 5. 创建 Pipeline from SCM
 
@@ -303,7 +317,7 @@ docker compose -f ci/docker-compose.yml down --volumes
 ## 11. Audit analysis：让 AI 解释证据
 
 **做什么：** review、commit/push 后，Pipeline 的工作部分为 Setup → Unit tests → Test suite → Audit analysis。
-Audit analysis 只绑定 `wbs-anthropic-api-key`，使用 `ANTHROPIC_API_KEY`，不再绑定 GLM / OPENAI_* credentials。无需再装分析或 Jira plugin。
+Audit analysis 只绑定 `wbs-anthropic-api-key`，使用 `ANTHROPIC_API_KEY`，不再绑定 GLM / OPENAI_* credentials。JSON 读写需要第 3 节列出的 Pipeline Utility Steps；无需 Jira 专用 plugin。
 `AUDIT_MODEL=claude-haiku-5-5` 同时控制 analyst 与截图观察，只有一个 provider/model。旧 `AUDIT_VISION_MODEL` 暂作兼容别名，新设置优先。
 Excel 翻译与 DOM healing 仍使用原来的 GLM；生产 route checker 仍是 Clef，本次只替换 audit。
 
@@ -389,7 +403,7 @@ Review tickets 无 agent、无 executor、无 container：人考虑多久，都�
 `jira_decision.json` 记录 status、批准者、选中的 finding IDs、分析文件 SHA-256。发送前再次检查 hash 和 IDs，防止批准后分析被更换。
 没有 candidate 时跳过 input，并记录 not_required；模型不可用也不会凭空创建 ticket。
 
-**Checkpoint：** 等待时 Test Report 和 audit_analysis.md 已可阅读；Jenkins 没有 executor 被 input 占住。批准一个 finding 后才进入 Jira 发送。
+**Checkpoint：** credential 更新且 JSON 插件安装完成后，Audit analysis 应正常结束；有已验证的 ticket suggestion 时 Review tickets 暂停，默认不勾选，人工勾选后点击 Record decision（部分 UI 显示 Proceed）。等待时 Test Report 和 audit_analysis.md 已可阅读；Jenkins 没有 executor 被 input 占住。批准一个 finding 后才进入 Jira 发送。
 最终 Post Actions 再归档带 decision/results 的报告。等待期间不能用“没有 Jira ticket”判断失败，因为还没有授权发送。
 
 **如果不顺利：** 没有 input 先看 audit_review.json 的 candidates；不要为了出现审批而放宽证据规则。TRANSLATION_REJECTED、导航错误或 VISION_* 错误不能单独推荐 bug。

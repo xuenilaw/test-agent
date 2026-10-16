@@ -25,6 +25,16 @@ def presentation(analysis):
                 ticket_count=tickets,unanalysed_count=missing,banner=banner)
 
 
+def credential_warning(analysis):
+    """Only controlled auth codes; never expose provider messages or credentials."""
+    errors = [*analysis.get('dropped_findings',[]), *analysis.get('questions',[])]
+    statuses = sorted({e['http_status'] for e in errors
+        if (e.get('provider_code')=='VISION_HTTP' or e.get('code')=='VISION_HTTP')
+        and type(e.get('http_status')) is int and e['http_status'] in {401,403}})
+    return '; '.join(f'Anthropic credential rejected ({status}): update `wbs-anthropic-api-key`'
+                     for status in statuses)
+
+
 def html_audit(analysis):
     view = presentation(analysis)
     def card(f):
