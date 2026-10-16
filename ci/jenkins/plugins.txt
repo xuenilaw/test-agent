@@ -3,3 +3,4 @@ git:5.11.0
 docker-workflow:653.v2f2c08eff0ec
 credentials-binding:728.v902a_273b_8947
 pipeline-stage-view:2.41
+htmlpublisher:429

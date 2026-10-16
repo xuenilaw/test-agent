@@ -24,6 +24,7 @@ class CIResultTests(unittest.TestCase):
             root=Path(temp);folder=root/'suite-one';folder.mkdir()
             summary=dict(status='PASSED',cases=[dict(status='PASSED')],duration_seconds=1,reason=None)
             for name in ['audit.csv','report.html']:(folder/name).write_text('fixture')
+            (folder/'junit.xml').write_text('<testsuites><testsuite><testcase/></testsuite></testsuites>')
             def save(): (folder/'summary.json').write_text(json.dumps(summary))
             save();self.assertEqual(module.build_result(0,root),'SUCCESS')
             self.assertEqual(module.build_result(1,root),'FAILURE')
@@ -45,6 +46,22 @@ class CIResultTests(unittest.TestCase):
             path.write_text(json.dumps(dict(status='BLOCKED',cases=[dict(status='BLOCKED')],duration_seconds=1)))
             self.assertEqual(module.build_result(1,root),'FAILURE')
             for name in ['audit.csv','report.html']:(folder/name).write_text('fixture')
+            (folder/'junit.xml').write_text('<testsuites><testsuite><testcase><error/></testcase></testsuite></testsuites>')
             self.assertEqual(module.build_result(1,root),'UNSTABLE')
             (root/'suite-stale').mkdir()
             self.assertEqual(module.build_result(1,root),'FAILURE')
+
+    def test_junit_cleanup_errors_agree_with_publisher_and_bad_xml_is_failure(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);folder=root/'suite-one';folder.mkdir()
+            (folder/'summary.json').write_text(json.dumps(dict(status='PASSED',cases=[dict(status='PASSED')],
+                                                              duration_seconds=1,reason=None)))
+            for name in ['audit.csv','report.html']:(folder/name).write_text('fixture')
+            path=folder/'junit.xml'
+            self.assertEqual(module.build_result(0,root),'FAILURE')
+            path.write_text('<testsuites><testsuite><testcase name="Cleanup"><error/></testcase></testsuite></testsuites>')
+            self.assertEqual(module.build_result(0,root),'UNSTABLE')
+            path.write_text('<broken')
+            self.assertEqual(module.build_result(0,root),'FAILURE')
+            path.write_text('<testsuites/>')
+            self.assertEqual(module.build_result(0,root),'FAILURE')

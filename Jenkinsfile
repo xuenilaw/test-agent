@@ -53,6 +53,7 @@ pipeline {
                         ''')
                         def result = sh(returnStdout: true,
                             script: "python ci/suite_result.py ${code}").trim()
+                        sh 'uv run python ci/prepare_reports.py'
                         if (result == 'UNSTABLE') {
                             unstable('Suite finished with FAILED/BLOCKED test cases. Inspect the archived report and audit.csv.')
                         } else if (result != 'SUCCESS') {
@@ -65,7 +66,16 @@ pipeline {
     }
     post {
         always {
-            archiveArtifacts artifacts: 'artifacts/suite-*/**', allowEmptyArchive: true
+            script {
+                try {
+                    junit testResults: 'reports/junit.xml', allowEmptyResults: false
+                } finally {
+                    archiveArtifacts artifacts: 'reports/**', fingerprint: true, allowEmptyArchive: true
+                    publishHTML(target: [reportDir: 'reports', reportFiles: 'report.html',
+                        reportName: 'Test Report', keepAll: true, alwaysLinkToLastBuild: true,
+                        allowMissing: true])
+                }
+            }
         }
     }
 }

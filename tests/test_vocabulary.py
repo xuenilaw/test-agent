@@ -26,6 +26,8 @@ class VocabularyTests(unittest.IsolatedAsyncioTestCase):
                             base_url="https://example.test/v1", vocabulary=vocabulary)
         payload = json.loads(run.call_args.args[1])
         self.assertEqual(payload["vocabulary"], vocabulary)
+        self.assertIn('München is the German name of Munich. The city as written in the workbook is authoritative; an English/German name pair is not an ambiguity.',
+                      payload['vocabulary']['hints'])
         self.assertNotIn("For OSM", INSTRUCTIONS)
         self.assertNotIn("value='Car'", INSTRUCTIONS)
 

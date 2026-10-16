@@ -25,7 +25,8 @@ def write_json(path: Path, value):
 
 def run_revalidation(args) -> int:
     from test_agent.plan_loader import load_plan
-    case_id = args.folder.name
+    from test_agent.reporting import read_json
+    case_id = read_json(args.folder / 'plan.json').get('case_id', args.folder.name)
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", case_id):
         case_id = "invalid-case"
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
@@ -56,7 +57,7 @@ async def run_translation(args: argparse.Namespace, *, report_sink=None, quiet=F
     project_root = args.project_dir.resolve()
     output_root = args.output_dir or project_root / "artifacts"
     run_id = "translation-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    output = output_root.resolve() / run_id / "cases" / args.case
+    output = getattr(args, 'output_folder', None) or output_root.resolve() / run_id / "cases" / args.case
     output.mkdir(parents=True)
     report = {"status": "REJECTED", "browser_executed": False, "contract_applied": False,
               "vocabulary_applied": False,
@@ -135,6 +136,15 @@ def main(argv: list[str] | None = None) -> int:
     report_parser.add_argument('folder',type=Path)
     audit_parser=commands.add_parser('audit',help='Build spreadsheet-safe audit.csv from saved suite or repeat evidence')
     audit_parser.add_argument('folder',type=Path)
+    for command, help_text in [('junit','Build step-level JUnit XML from saved results'),
+                               ('package','Prepare five named Jenkins report downloads')]:
+        sub = commands.add_parser(command, help=help_text)
+        sub.add_argument('folder', type=Path)
+        if command == 'package':
+            sub.add_argument('--output-dir', type=Path, default=Path('reports'))
+    prune_parser = commands.add_parser('prune', help='Preview old artifact deletion; --yes deletes')
+    prune_parser.add_argument('--keep', type=int, default=10)
+    prune_parser.add_argument('--yes', action='store_true')
     repeat_parser=commands.add_parser('repeat',help='Repeat execution with current validated plans, without translation')
     repeat_parser.add_argument('workbook',type=Path)
     repeat_parser.add_argument('--locators',type=Path,required=True)
@@ -185,8 +195,19 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument("--output-dir", type=Path)
     run_parser.add_argument("--skip-vision", action="store_true", help="Skip declared vision checks as BLOCKED for offline/dev runs")
     args = parser.parse_args(argv)
-    if args.command in {'report','repeat','audit'}:
+    if args.command in {'report','repeat','audit','junit','package','prune'}:
         try:
+            if args.command == 'prune':
+                from test_agent.artifacts import prune
+                for path in prune(args.project_dir / 'artifacts', keep=args.keep, yes=args.yes):
+                    print(('Deleted: ' if args.yes else 'Would delete: ') + str(path))
+                return 0
+            if args.command == 'package':
+                from test_agent.artifacts import package_reports
+                print(package_reports(args.folder, args.output_dir)); return 0
+            if args.command == 'junit':
+                from test_agent.junit import build_junit
+                print(build_junit(args.folder)); return 0
             if args.command=='audit':
                 from test_agent.audit import build_audit
                 print(build_audit(args.folder));return 0

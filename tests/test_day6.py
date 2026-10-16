@@ -257,7 +257,7 @@ class Day6Tests(unittest.IsolatedAsyncioTestCase):
             root=Path(temp)
             async def suite(*args,**kwargs):
                 self.assertTrue(kwargs['require_reuse'])
-                return fixture_suite(kwargs['output_root']/('suite-'+str(len(list(kwargs['output_root'].glob('suite-*'))))))
+                return fixture_suite(kwargs['output_folder'])
             with patch('test_agent.repeatability.read_case_ids',return_value=['CASE-1']),patch(
                     'test_agent.repeatability.reusable_plan',return_value=root/'validated'),patch(
                     'test_agent.repeatability.load_plan'),patch('test_agent.repeatability.run_suite',side_effect=suite),patch(
@@ -266,6 +266,8 @@ class Day6Tests(unittest.IsolatedAsyncioTestCase):
             translator.assert_not_called()
             output=Path(report['output_directory'])
             self.assertTrue((output/'repeatability.json').exists())
+            self.assertTrue((output/'junit.xml').exists())
+            self.assertEqual([Path(run['output_directory']).name for run in report['runs']], ['run-1','run-2','run-3'])
             self.assertIn('Repeatability',(output/'report.html').read_text())
             self.assertTrue(all(c['consistent'] for c in report['cases']))
             with patch('test_agent.repeatability.read_case_ids',return_value=['CASE-1']),patch(

@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import shutil
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +16,7 @@ from test_agent.reporting import build_report,tool_metadata
 
 def reusable_plan(root: Path, workbook: Path, case_id: str, url: str):
     candidates=list(root.glob(f'**/translation-*/cases/{case_id}/validation.json'))
+    candidates.extend(root.glob(f'**/cases/{case_id}/translation/validation.json'))
     for report in sorted(candidates,key=lambda p:p.stat().st_mtime_ns,reverse=True):
         try:
             _,source=load_plan(report.parent)
@@ -33,14 +35,14 @@ def reusable_plan(root: Path, workbook: Path, case_id: str, url: str):
 
 
 async def run_suite(workbook: Path, locators: Path, project_root: Path, *, reuse=False,
-                    skip_vision=False, headed=False, output_root=None, url='https://www.openstreetmap.org/', faults=None,require_reuse=False,plan_root=None):
+                    skip_vision=False, headed=False, output_root=None, url='https://www.openstreetmap.org/', faults=None,require_reuse=False,plan_root=None,output_folder=None):
     from test_agent.cli import run_translation
     faults = list(dict.fromkeys(faults or []))
     validate_fault_names(faults)
     start=time.perf_counter()
     stamp=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
     artifact_root=output_root or project_root/'artifacts'
-    output=artifact_root/('suite-'+stamp); output.mkdir(parents=True)
+    output=output_folder or artifact_root/('suite-'+stamp); output.mkdir(parents=True)
     from dotenv import load_dotenv
     load_dotenv(project_root/'.env')
     summary=dict(workbook=str(workbook.resolve()),output_directory=str(output.resolve()),cases=[],status='BLOCKED',reason=None,faults_injected=faults,
@@ -52,7 +54,8 @@ async def run_suite(workbook: Path, locators: Path, project_root: Path, *, reuse
         started=time.perf_counter()
         try:
             result=await run_case(folder,locators,project_root,output_root=output,headed=headed,
-                                  skip_vision=skip_vision,faults=selected_faults)
+                                  skip_vision=skip_vision,faults=selected_faults,
+                                  output_folder=output/'cases'/case_id/'run')
             entry.update(status=result.status,reason=result.reason,run_folder=result.output_directory,
                 heals=getattr(result,'locator_heals',0),vision_click_attempts=getattr(result,'vision_click_attempts',0),
                 vision_click_successes=getattr(result,'vision_click_successes',0))
@@ -81,13 +84,17 @@ async def run_suite(workbook: Path, locators: Path, project_root: Path, *, reuse
                 entry['designed_outcome']=(contract or {}).get('designed_outcome')
                 folder=reusable_plan(plan_root or artifact_root,workbook,case_id,url) if reuse else None
                 entry['reused']=folder is not None
+                translation_output=output/'cases'/case_id/'translation'
+                if folder is not None:
+                    shutil.copytree(folder,translation_output)
+                    folder=translation_output
                 if folder is None:
                     if require_reuse:
                         raise ValueError('repeat plan missing or stale for '+case_id)
                     print(f'{case_id}: translating...',flush=True)
                     report={}; started=time.perf_counter()
                     args=argparse.Namespace(project_dir=project_root,workbook=workbook,case=case_id,
-                        contracts=None,vocabulary=None,output_dir=output,url=url)
+                        contracts=None,vocabulary=None,output_dir=output,url=url,output_folder=translation_output)
                     await run_translation(args,report_sink=report,quiet=True)
                     entry['translation_seconds']=round(time.perf_counter()-started,3)
                     folder=Path(report['output_directory'])
@@ -130,6 +137,8 @@ async def run_suite(workbook: Path, locators: Path, project_root: Path, *, reuse
     build_report(output)
     from test_agent.audit import build_audit
     build_audit(output)
+    from test_agent.junit import build_junit
+    build_junit(output)
     return summary
 
 

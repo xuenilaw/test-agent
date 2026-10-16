@@ -75,7 +75,7 @@ async def run_repeat(workbook,locators,project_root,*,times=3,headed=False,outpu
     for index in range(times):
         print(f'Repeat {index+1}/{times}',flush=True)
         result=await run_suite(workbook,locators,project_root,reuse=True,require_reuse=True,headed=headed,
-                               output_root=output,plan_root=project_root/'artifacts')
+                               output_root=output,plan_root=project_root/'artifacts',output_folder=output/f'run-{index+1}')
         report['runs'].append(result)
         report['cases']=summarize_repeats(report['runs'])
         entries=[dict(entry,run_label=f'Run {i+1}') for i,run in enumerate(report['runs']) for entry in run['cases']]
@@ -89,4 +89,6 @@ async def run_repeat(workbook,locators,project_root,*,times=3,headed=False,outpu
         build_report(output)
         from test_agent.audit import build_audit
         build_audit(output)
+        from test_agent.junit import build_junit
+        build_junit(output)
     return report

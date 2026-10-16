@@ -42,7 +42,7 @@ def build_audit(folder: Path) -> Path:
                 source_folder = source_file.parent if source_file else None
             source = read_json(source_folder/'source.json') if source_folder else {}
             case = source.get('case', {})
-            run_id = case_folder.parent.parent.name if case_folder else Path(run.get('output_directory', folder)).name
+            run_id = Path(run.get('output_directory', folder)).name
             base = dict(run_id=run_id, repeat_index=repeat_index, case_id=entry.get('case_id'),
                 case_name=case.get('name', case.get('case_name', entry.get('case_id'))),
                 case_status=entry.get('status'), designed_outcome=entry.get('designed_outcome'),

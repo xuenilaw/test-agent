@@ -52,7 +52,10 @@ class VisionClickFallback:
             effect = self.resolver.build_locator(page, effect_spec).filter(visible=True)
             if await effect.count() != 0:
                 raise VisionError('CLICK_EFFECT_ALREADY_VISIBLE')
-            image = await page.screenshot(path=str(folder/'viewport.png'), full_page=False, scale='css')
+            try:
+                image = await page.screenshot(path=str(folder/'viewport.png'), full_page=False, scale='css')
+            except Exception as exc:
+                raise VisionError('CAPTURE', error_class=type(exc).__name__) from None
             picture = Image.open(io.BytesIO(image)).convert('RGB')
             if picture.size != (1280,800) or page.viewport_size != {'width':1280,'height':800}:
                 raise VisionError('CONFIG', fields=['1280x800_viewport'])
@@ -87,7 +90,8 @@ class VisionClickFallback:
             return dict(event)
         except Exception as exc:
             error = exc if isinstance(exc,VisionError) else VisionError('SCHEMA' if isinstance(exc,ValueError) else 'INTERNAL')
-            event.update(code='VISION_'+error.code, **error.details)
+            event.update(code='VISION_'+error.code, error_class=type(exc).__name__)
+            event.update(error.details)
             raise Blocked('Vision click blocked: '+event['code'], **{k:v for k,v in event.items() if k != 'status'}) from None
         finally:
             if isinstance(reply.get('content'),str):

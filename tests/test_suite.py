@@ -118,6 +118,7 @@ class SuiteTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_designed_failure_remains_failed_and_reuse_skips_translation(self):
         with tempfile.TemporaryDirectory() as temp:
+            (Path(temp)/'OSM-001').mkdir()  # Reused plans are copied into the current suite.
             translated=[]
             async def translate(args,report_sink,quiet):
                 translated.append(args.case)

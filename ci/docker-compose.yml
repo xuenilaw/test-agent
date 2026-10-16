@@ -5,6 +5,10 @@ services:
     image: wbs-jenkins:2.580.1-1
     # Local Docker Desktop learning only: root can access the mounted Docker socket.
     user: "0:0"
+    environment:
+      # Local controller only: inline report styles/images; scripts remain blocked.
+      JAVA_OPTS: >-
+        -Dhudson.model.DirectoryBrowserSupport.CSP="sandbox; default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline';"
     ports:
       - "127.0.0.1:8080:8080"
     volumes:

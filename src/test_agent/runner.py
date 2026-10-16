@@ -17,7 +17,7 @@ from test_agent.schemas.contracts import threshold_for
 
 async def run_case(folder: Path, locators: Path, project_root: Path, *, headed=False,
                    output_root: Path | None = None, route_handler=None, timeout=15_000,
-                   vision_provider=None, skip_vision=False, locator_planner=None, faults=None):
+                   vision_provider=None, skip_vision=False, locator_planner=None, faults=None, output_folder=None):
     # Input errors propagate to the CLI as exit 2, before async_playwright starts.
     plan, source = load_plan(folder)
     faults = list(dict.fromkeys(faults or []))
@@ -37,7 +37,7 @@ async def run_case(folder: Path, locators: Path, project_root: Path, *, headed=F
     if local_browsers.exists():
         os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(local_browsers))
     run_id = "run-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    output = (output_root or project_root / "artifacts") / run_id / "cases" / plan.case_id
+    output = output_folder or (output_root or project_root / "artifacts") / run_id / "cases" / plan.case_id
     screenshots = output / "screenshots"
     screenshots.mkdir(parents=True)
     from test_agent.planning.locator import LocatorPlanner

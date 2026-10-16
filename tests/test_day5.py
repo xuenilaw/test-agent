@@ -36,6 +36,41 @@ class FakeClick:
 
 
 class FaultInputTests(unittest.IsolatedAsyncioTestCase):
+    async def test_screenshot_failure_has_capture_code_and_safe_error_class(self):
+        from test_agent.verification.vision_click import VisionClickFallback
+        with tempfile.TemporaryDirectory() as temp:
+            effect=SimpleNamespace(count=AsyncMock(return_value=0))
+            locator=SimpleNamespace(filter=lambda **kwargs: effect)
+            resolver=SimpleNamespace(targets={'layers control':'Open layers'}, entries={'map layers panel':object()},
+                                     build_locator=lambda *args: locator)
+            provider=FakeClick()
+            fallback=VisionClickFallback(resolver,json.loads((ROOT/'cases/osm/locators.json').read_text()),
+                                         lambda:provider,Path(temp))
+            page=SimpleNamespace(screenshot=AsyncMock(side_effect=TimeoutError('sensitive details')))
+            with self.assertRaises(Blocked) as caught:
+                await fallback(page,'layers control',Blocked('missing'))
+            self.assertEqual(caught.exception.details['code'],'VISION_CAPTURE')
+            self.assertEqual(caught.exception.details['error_class'],'TimeoutError')
+            self.assertEqual(provider.calls,[])
+            saved=(Path(temp)/'click-1/decision.json').read_text()
+            self.assertNotIn('sensitive details',saved)
+            self.assertFalse(json.loads(saved)['clicked'])
+
+    async def test_unexpected_vision_click_error_has_safe_error_class(self):
+        from test_agent.verification.vision_click import VisionClickFallback
+        with tempfile.TemporaryDirectory() as temp:
+            effect=SimpleNamespace(count=AsyncMock(side_effect=RuntimeError('sensitive details')))
+            locator=SimpleNamespace(filter=lambda **kwargs: effect)
+            resolver=SimpleNamespace(targets={'layers control':'Open layers'},entries={'map layers panel':object()},
+                                     build_locator=lambda *args: locator)
+            fallback=VisionClickFallback(resolver,json.loads((ROOT/'cases/osm/locators.json').read_text()),
+                                         lambda:FakeClick(),Path(temp))
+            with self.assertRaises(Blocked) as caught:
+                await fallback(None,'layers control',Blocked('missing'))
+            self.assertEqual(caught.exception.details['code'],'VISION_INTERNAL')
+            self.assertEqual(caught.exception.details['error_class'],'RuntimeError')
+            self.assertNotIn('sensitive details',(Path(temp)/'click-1/decision.json').read_text())
+
     async def test_suite_preflights_faults_and_only_injects_matching_cases(self):
         with tempfile.TemporaryDirectory() as temp:
             async def translate(args,report_sink,quiet):

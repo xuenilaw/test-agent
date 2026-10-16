@@ -14,6 +14,7 @@
     "layers panel close button": "Closes the map layers drawer after resetting the default layer."
   },
   "hints": [
+    "München is the German name of Munich. The city as written in the workbook is authoritative; an English/German name pair is not an ambiguity.",
     "Use OSM Website as the navigate target; put the supplied application URL in value.",
     "For Car or Driving, use select on travel-mode selector with value Car; the selected check also expects Car.",
     "Keep starting-point field and destination field as separate targets when filling or clearing inputs.",

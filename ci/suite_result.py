@@ -1,5 +1,6 @@
 """Map a suite exit to a build result; a Python crash can also exit with 1."""
 import json
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
@@ -18,13 +19,19 @@ def build_result(code, root=Path('artifacts')):
         expected = 'FAILED' if 'FAILED' in statuses else 'BLOCKED' if 'BLOCKED' in statuses else 'PASSED'
         if summary.get('reason') or summary['status'] != expected or 'duration_seconds' not in summary:
             return 'FAILURE'
-        if not all((folder/name).is_file() for name in ['report.html', 'audit.csv']):
+        if not all((folder/name).is_file() for name in ['report.html', 'audit.csv', 'junit.xml']):
             return 'FAILURE'
+        xml = ET.parse(folder/'junit.xml').getroot()
+        nodes = xml.findall('./testsuite/testcase')
+        if not nodes:
+            return 'FAILURE'
+        junit_failed = any(n.find('failure') is not None or n.find('error') is not None for n in nodes)
         if code == 0 and expected == 'PASSED':
-            return 'SUCCESS'
+            # Cleanup is reported separately and need not change the saved case verdict.
+            return 'UNSTABLE' if junit_failed else 'SUCCESS'
         if code == 1 and expected in {'FAILED', 'BLOCKED'}:
             return 'UNSTABLE'
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, ET.ParseError):
         pass
     return 'FAILURE'
 

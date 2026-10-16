@@ -175,6 +175,14 @@ class Report:
         if not path.is_absolute():
             path=(context or self.folder)/path
         path=path.resolve()
+        if not path.is_file():
+            # Saved CI paths can refer to a different machine. Rebase only within this report.
+            for index, part in enumerate(path.parts):
+                if part == self.folder.name:
+                    candidate=(self.folder / Path(*path.parts[index+1:])).resolve()
+                    if candidate.is_relative_to(self.folder) and candidate.is_file():
+                        path=candidate
+                        break
         return path if path.is_relative_to(self.base) and path.is_file() else None
 
     def link(self,path,label):

@@ -2,6 +2,11 @@
 
 Docker/Jenkins CI：从 [中文学习指南](docs/ci/jenkins-guide.md) 开始，包含 credentials、Pipeline from SCM、Poll SCM 和报告下载。
 `suite` / `repeat` 自动写入 `audit.csv`；已有结果可用 `uv run python -m test_agent audit artifacts/suite-<id>`（或 repeat 目录）离线导出。
+同时生成逐 case/step 的 `junit.xml`。Jenkins 的 **Test Result** 展示步骤，**Test Report** 打开 HTML，`reports/` 归档五个命名文件。
+离线生成：`uv run python -m test_agent junit artifacts/suite-<id>`；打包：`uv run python -m test_agent package artifacts/suite-<id> --output-dir reports`。
+完整截图链接需将 `evidence.zip` 解压到下载的 `report.html` 旁边。Controller 插件/CSP 更新步骤及状态映射见 [Jenkins guide](docs/ci/jenkins-guide.md)。
+suite 使用 `suite-<id>/cases/<case_id>/{translation,run}/`；repeat 使用 `repeat-<id>/run-<n>/cases/…`。旧结构仍可离线读取。
+`uv run python -m test_agent prune --keep 10` 默认仅预览，核对后加 `--yes` 删除最旧的顶层运行目录，保留最新十个（四类合计）；冻结 calibration 与 cases 不受影响。
 HTML 的 locator source 显示 locator file / cache / healed (GLM) / vision (Claude)；CSV 保留 human / cache / healed / vision 原始值。
 
 今天只验证：打开页面 → 找到搜索框 → 输入 Hamburg → 断言输入值 → 截图 → 清理。
@@ -560,7 +565,7 @@ uv run python -m test_agent repeat cases/osm/WBS_testcase1_osm.xlsx --locators c
 ```
 
 repeat 总是复用计划（--reuse 可显式写出）；缺计划或计划过期时要求先 translate/revalidate。
-输出 artifacts/repeat-.../repeatability.json 和 report.html，每次 suite 也有自己的 report.html。
+输出 artifacts/repeat-.../repeatability.json、report.html、audit.csv、junit.xml，每次 run-<n>/ 也有自己的报告。
 N 次都执行真实浏览器/API，会产生费用；本次已做一次 times=3（9 个 case），无需为检查 HTML 再访问 OSM。
 有任何真实 case FAILED/BLOCKED，退出码为 1；OSM-002 设计 FAILED，所以状态符合设计也会退出 1。
 
