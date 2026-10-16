@@ -388,20 +388,66 @@ Manage Jenkins → Credentials → System → Global credentials → Add Credent
 | Description | WBS Jira approval workflow（不填 token） |
 
 **为什么：** token 代表你的账号权限；账号需要 WBSFP 的 Browse/Create issues/Add comments/Create attachments 权限。
-用户没有的权限，token 也不会增加。email/token 不进 Git、报告或 Console Output；只在 Jira 发送阶段用 `withCredentials` 注入 `JIRA_EMAIL` / `JIRA_API_TOKEN`。
+用户没有的权限，token 也不会增加。email/token 不进 Git、报告或 Console Output；Jira 发送阶段以及明确开启的只读 connection check 用 `withCredentials` 注入 `JIRA_EMAIL` / `JIRA_API_TOKEN`。
 站点 URL、project key 可以版本管理。Audit stage 没有 Jira credential，也没有写 Jira 的 tool。
 
-**Checkpoint：** Installed credentials 可见 ID wbs-jira；不要把 token 截图发给 reviewer。没有批准 ticket 时，流程根本不会读取这个 credential。
+**Checkpoint：** Installed credentials 可见 ID wbs-jira；不要把 token 截图发给 reviewer。没有批准 ticket 且没有开启只读 connection check 时，流程不会读取这个 credential。
 
-**如果不顺利：** JIRA_AUTH（401/403）查 email/token、到期与权限；JIRA_CONFIG 查站点/project/issue types、approval hash 或 evidence；JIRA_HTTP + status 查 Jira 服务/项目配置；JIRA_TIMEOUT 查网络。
-错误只记录安全 code/status，不输出响应正文，不自动重试创建。
+### Jira 出错时先运行只读连接检查（build #11 的 404）
+
+**第一步排查：** `wbs-jira` 的 email 必须是能在这个 Jira site 看到 **WBSFP** 的 Atlassian 账号，API token 必须属于同一个账号；另一个 Jira 账号创建的 token 不能和这个 email 混用。
+先在本机 `.env` 填同一组 `JIRA_EMAIL` / `JIRA_API_TOKEN`，确认 `JIRA_SITE=https://lawxueni.atlassian.net`、`JIRA_PROJECT=WBSFP`，然后执行：
+
+```bash
+uv run python -m test_agent jira check
+```
+
+只执行 GET：myself → project/WBSFP → create-metadata issue types，遇到第一个错误就停止并返回非零退出码。
+只打印阶段状态、账号 display name（不打印 email/accountId）和可创建的 issue type 名称，不保存完整响应、不创建 issue/comment/附件，也不写 decision 文件。
+成功例如 `Jira auth: OK — <display name>`、`Jira project: OK`、`Jira issue_types: OK — Bug, Task`。
+这些 GET 成功说明认证、项目可见性与 metadata 访问成功，不保证已经有 Create issues / Add comments / Create attachments 的写权限。
+
+**用 Jenkins 中的同一个 credential 检查：** 新 Jenkinsfile 加载后，用 **Build with Parameters**，勾选 `CHECK_JIRA_CONNECTION`（默认 false），运行 **Jira connection check**。
+它在 Setup 后使用 `wbs-jira`，只读检查失败时标记该阶段/build UNSTABLE，并继续原测试流程；没有执行 Jira 写操作。
+参数第一次随 Jenkinsfile 加载后才会出现在 job 页面。默认不勾选时不会增加 Jira 请求。
+
+现在 `jira_results.json` 每个 error 都有 `phase` 与 `path_template`。请求阶段为 issue_types / search / create / comment / attach；连接检查另外有 auth / project。
+approval / prepare / configuration 表示请求前的本地校验，path_template 为 null。模板不包含实际 query 值、email 或 response body。
+Console 例如：`Jira 404 during issue_types (project WBSFP not found or not visible to the credential's account)`，后面列出安全的 path template。
+404 先核对 site、项目 key 和这个 credential 账号的项目可见性，不要直接认定 Jira API 路径失效。
+
+2026-10-16 已用 [Atlassian 官方 OpenAPI](https://dac-static.atlassian.com/cloud/jira/platform/swagger-v3.v3.json) 逐一核对 method/path（以下均在 `/rest/api/3/` 下）：
+
+| Phase | Method / path template |
+| --- | --- |
+| auth | GET myself |
+| project | GET project/{project} |
+| issue_types | GET issue/createmeta/{project}/issuetypes |
+| search | POST search/jql |
+| create | POST issue |
+| comment | POST issue/{issue}/comment |
+| attach | POST issue/{issue}/attachments |
+
+JIRA_AUTH（401/403）查账号/token、到期和权限；JIRA_CONFIG 查配置、可用 issue types、approval hash 或 evidence；JIRA_HTTP + status 按 phase 查请求；JIRA_TIMEOUT 查网络。
+错误不包含私有响应正文，也不自动重试创建；附件出错仍保留已经创建的 issue key，先检查 Jira 再决定后续动作。
 
 ## 13. Review tickets：人决定，默认不选
 
 **做什么：** Audit 有至少一个安全的 `recommend_ticket: true` finding，才进入 Review tickets。
-在 build 的 input 页面通过链接打开完整分析，再逐项勾选要创建的 finding（**默认全部 false**），点击 **Record decision**。
-每项显示 finding ID、case、likely cause + confidence、ticket type、title、next step、evidence rows 和 designed outcome。
-input 只列可批准的 ticket，并显示 attention items 数量与分析链接作为参考。possible false pass 和其他无 ticket 的 attention item 出现在 build description / Test Report；**不会单独暂停 build**。
+顶部显示：**AI audit requires human approval. Tick the test case(s) you want to report, then click 'Create Jira ticket'. Unticked items are not created.**
+下面的 `Total TC: 3; Passed: 2; Failed: 1; Blocked: 0` 来自本次 summary.json 的 case verdict，实际数字随结果变化；不是 audit attention 数。
+逐项勾选要创建的 finding（**默认全部 false**），点击 **Create Jira ticket**。不勾选的项不会创建，也不会给已有 issue 加评论。
+每个 checkbox 的 description 只有一行，例如：
+`F-OSM-002-1 | OSM-002 | Cause: Test case problem | Confidence: high | Reason: The 776 km route takes 7:36, so the 180-minute limit is unrealistic.`
+Confidence 是 AI 自报的 low / medium / high，不是概率。原因使用必填 `short_reason`，要求一句话，Python 去除换行、压缩空白并截到 160 字符；完整 explanation 留在 Markdown 和 Jira description。
+
+**如何在新 tab 看分析：** 当前 controller 使用默认 **Plain text** formatter（2026-10-16 只读检查配置；Safe HTML 插件虽已安装，但未启用）。input message / checkbox descriptions 不能依赖 HTML anchor。
+在**本次 build** 的 sidebar 对 **Test Report** 用 Mac Cmd-click / Windows 或 Linux Ctrl-click，或右键 Open Link in New Tab；报告内有 AI audit analysis 链接，Build Artifacts 也有 audit_analysis.md。
+input 保留完整 artifact URL 便于复制；不声称纯文本 URL 会变成可点击的新窗口链接。用浏览器的新 tab 操作打开 sidebar 链接，避免依赖 `target="_blank"` 或放宽报告 CSP。
+[Jenkins Markup Formatter 官方说明](https://www.jenkins.io/doc/book/security/markup-formatter/)：Plain text 会转义 HTML；Safe HTML 也会过滤不允许的标签/属性，因此不保证保留 target。
+本次不修改全局 formatter / CSP，也不启用 raw HTML；所有模型标签文字仍 HTML-escape，便于在 Plain text 或将来的 Safe HTML 下安全显示（恶意文字在 Plain text 下可能显示实体文本）。
+
+input 只列可批准的 ticket。possible false pass 和其他无 ticket 的 attention item 出现在 build description / Test Report；**不会单独暂停 build**。
 
 **为什么：** Pipeline 顶层用 `agent none`。Setup/测试/audit 在工作 Docker agent 内执行，结束后 `stash reports/` 并先发布报告。
 Review tickets 无 agent、无 executor、无 container：人考虑多久，都不占用测试机。输入完成后，Jira 阶段重新分配 agent、checkout 和 `unstash reports/`。
@@ -413,7 +459,7 @@ partial audit 只要有一个通过规则的 ticket candidate，仍进入 Review
 没有 candidate 时，Review tickets 与 Record decision and Jira **都跳过**；后者在分配 Docker agent 之前检查条件，不再为了空决定启动 container，也不生成 jira_decision.json。
 有 candidate 但人工全部拒绝 / 超时时，仍记录决定，不发送 Jira 请求。模型不可用不会凭空创建 ticket。
 
-**Checkpoint：** credential 更新且 JSON 插件安装完成后，Audit analysis 应正常结束；有已验证的 ticket suggestion 时 Review tickets 暂停，默认不勾选，人工勾选后点击 Record decision（部分 UI 显示 Proceed）。等待时 Test Report 和 audit_analysis.md 已可阅读；Jenkins 没有 executor 被 input 占住。批准一个 finding 后才进入 Jira 发送。
+**Checkpoint：** credential 更新且 JSON 插件安装完成后，Audit analysis 应正常结束；有已验证的 ticket suggestion 时 Review tickets 暂停，默认不勾选，人工勾选后点击 Create Jira ticket。等待时 Test Report 和 audit_analysis.md 已可阅读；Jenkins 没有 executor 被 input 占住。批准一个 finding 后才进入 Jira 发送。
 最终 Post Actions 再归档带 decision/results 的报告。等待期间不能用“没有 Jira ticket”判断失败，因为还没有授权发送。
 
 **如果不顺利：** 没有 input 先看 audit_review.json 的 candidates；不要为了出现审批而放宽证据规则。TRANSLATION_REJECTED、导航错误或 VISION_* 错误不能单独推荐 bug。
@@ -502,6 +548,7 @@ uv run python -m test_agent jira create reports --approved F-OSM-002-1 --dry-run
 离线预览不能查询 issue types，因此使用保守的 Task 名称；真正发送先发现元数据并记录实际选择（bug 可能改为 Bug）。测试用例修复始终选 Task。
 此文件准确展示本次预览准备的 ADF/labels/链接；没有把“未查询的元数据”伪装成已知。没有 candidate 时传 `--approved ''` 只得到空预览。
 
+旧 audit_analysis.json 若没有 short_reason，先重新执行 audit-agent 并 package，再重新批准新的 analysis hash；不能直接复用旧批准发送。
 只有明确提供 `--send` 才会发送；本机输入 `--approved` IDs 加 `--send` 就是该次操作的人工授权，Jenkins 则使用保存的 input 决策和 hash。
 本轮交付只运行一次授权的 live audit 和 Jira dry-run，不替你批准 ticket，不发送真实 issue/comment。review、commit/push 后再由你在 Jenkins 完成一次真实审批验收。
 

@@ -16,10 +16,15 @@ from test_agent.reporting import read_json, short_text
 from test_agent.schemas.audit_analysis import Finding
 
 
+PATH_TEMPLATES = dict(auth='myself', project='project/{project}',
+    issue_types='issue/createmeta/{project}/issuetypes', search='search/jql', create='issue',
+    comment='issue/{issue}/comment', attach='issue/{issue}/attachments')
+
+
 class JiraError(ValueError):
-    def __init__(self, code, status=None):
+    def __init__(self, code, status=None, *, phase=None):
         super().__init__(code)
-        self.code, self.status = code, status
+        self.code, self.status, self.phase = code, status, phase
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -36,7 +41,7 @@ class JiraClient:
         self.authorization = 'Basic '+base64.b64encode((email+':'+token).encode()).decode()
         self.opener = opener or build_opener(NoRedirect()).open
 
-    def request(self, method, path, body=None, *, multipart=None):
+    def request(self, method, path, body=None, *, multipart=None, phase=None):
         headers = {'Authorization':self.authorization,'Accept':'application/json'}
         data = json.dumps(body).encode() if body is not None else None
         if data is not None:
@@ -53,17 +58,17 @@ class JiraClient:
             code = 'JIRA_AUTH' if exc.code in {401,403} else 'JIRA_HTTP'
             status = exc.code
             exc.close()
-            raise JiraError(code, status) from None
+            raise JiraError(code, status, phase=phase) from None
         except (TimeoutError, URLError) as exc:
             timeout = isinstance(exc, TimeoutError) or isinstance(getattr(exc,'reason',None), TimeoutError)
-            raise JiraError('JIRA_TIMEOUT' if timeout else 'JIRA_HTTP') from None
+            raise JiraError('JIRA_TIMEOUT' if timeout else 'JIRA_HTTP',phase=phase) from None
         except Exception:
-            raise JiraError('JIRA_HTTP') from None
+            raise JiraError('JIRA_HTTP',phase=phase) from None
 
     def issue_types(self):
         types, start = {}, 0
         for _ in range(10):
-            data = self.request('GET',f'issue/createmeta/{self.project}/issuetypes?startAt={start}&maxResults=100')
+            data = self.request('GET',f'issue/createmeta/{self.project}/issuetypes?startAt={start}&maxResults=100',phase='issue_types')
             values = data.get('issueTypes', data.get('values', []))
             if not isinstance(values,list) or not values:
                 raise JiraError('JIRA_CONFIG')
@@ -74,6 +79,55 @@ class JiraClient:
             if data.get('isLast', start >= data.get('total',start)):
                 return types
         raise JiraError('JIRA_CONFIG')
+
+
+def error_record(exc, phase):
+    error = exc if isinstance(exc,JiraError) else JiraError('JIRA_HTTP')
+    phase = error.phase if error.phase in PATH_TEMPLATES else phase
+    return dict(code=error.code,status=error.status,phase=phase,path_template=PATH_TEMPLATES.get(phase))
+
+
+def error_line(error, project):
+    line = f"Jira {error['status'] or error['code']} during {error['phase']}"
+    if error['status']==404 and error['phase'] in {'project','issue_types'}:
+        line += f" (project {project} not found or not visible to the credential's account)"
+    if error.get('path_template'):
+        line += ' [path: '+error['path_template']+']'
+    return line
+
+
+def public_name(value):
+    # Only displayName/type names, never email/accountId or raw provider bodies.
+    text = ' '.join(str(value).split())
+    text = ''.join(c for c in text if c.isprintable())
+    return re.sub(r'\S+@\S+', '[redacted]', text)[:160]
+
+
+def check_connection(*, client=None):
+    """Read-only diagnostics: GET identity, project visibility and create metadata."""
+    result = dict(checks=[],errors=[])
+    phase = 'configuration'
+    try:
+        site = os.getenv('JIRA_SITE','https://lawxueni.atlassian.net').rstrip('/')
+        project = os.getenv('JIRA_PROJECT','WBSFP')
+        validate_config(site,project)
+        client = client or JiraClient(site,project,os.getenv('JIRA_EMAIL',''),os.getenv('JIRA_API_TOKEN',''))
+        phase = 'auth'
+        me = client.request('GET','myself',phase=phase)
+        if not isinstance(me,dict) or not isinstance(me.get('displayName'),str):
+            raise JiraError('JIRA_HTTP')
+        result['checks'].append(dict(phase=phase,status='OK',display_name=public_name(me['displayName'])))
+        phase = 'project'
+        visible = client.request('GET','project/'+project,phase=phase)
+        if not isinstance(visible,dict) or visible.get('key')!=project:
+            raise JiraError('JIRA_HTTP')
+        result['checks'].append(dict(phase=phase,status='OK'))
+        phase = 'issue_types'
+        types = client.issue_types()
+        result['checks'].append(dict(phase=phase,status='OK',issue_types=[public_name(n) for n in sorted(types)]))
+    except Exception as exc:
+        result['errors'].append(error_record(exc,phase))
+    return result
 
 
 def validate_config(site, project):
@@ -151,13 +205,14 @@ def attach(client, folder, key, paths):
             filename = f'evidence-{index}.png'
             body = (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\n'
                     'Content-Type: image/png\r\n\r\n').encode()+image+f'\r\n--{boundary}--\r\n'.encode()
-            client.request('POST',f'issue/{key}/attachments',multipart=(body,boundary))
+            client.request('POST',f'issue/{key}/attachments',multipart=(body,boundary),phase='attach')
 
 
 def create_tickets(folder, approved, *, send=False, client=None):
     folder = Path(folder).resolve()
     result = dict(dry_run=not send,issues=[],errors=[])
     payloads = []
+    phase = 'approval'
     try:
         site, project = os.getenv('JIRA_SITE','https://lawxueni.atlassian.net').rstrip('/'), os.getenv('JIRA_PROJECT','WBSFP')
         validate_config(site,project)
@@ -173,8 +228,10 @@ def create_tickets(folder, approved, *, send=False, client=None):
         types = None
         if send and selected:
             client = client or JiraClient(site,project,os.getenv('JIRA_EMAIL',''),os.getenv('JIRA_API_TOKEN',''))
+            phase = 'issue_types'
             types = client.issue_types()
         for finding,dossier in selected:
+            phase = 'prepare'
             issue_type = 'Bug' if finding['ticket_type']=='bug' and types and 'Bug' in types else 'Task'
             if types is not None and issue_type not in types:
                 raise JiraError('JIRA_CONFIG')
@@ -189,7 +246,8 @@ def create_tickets(folder, approved, *, send=False, client=None):
             if not send:
                 continue
             try:
-                existing = client.request('POST','search/jql',entry['search_payload'])
+                phase = 'search'
+                existing = client.request('POST','search/jql',entry['search_payload'],phase=phase)
                 issues = existing.get('issues')
                 if not isinstance(issues,list):
                     raise JiraError('JIRA_HTTP')
@@ -197,12 +255,14 @@ def create_tickets(folder, approved, *, send=False, client=None):
                     key = issues[0]['key']
                     if not re.fullmatch(re.escape(project)+r'-\d+',key):
                         raise JiraError('JIRA_HTTP')
+                    phase = 'comment'
                     client.request('POST',f'issue/{key}/comment',{'body':adf([
                         'AI suggestion reviewed again; new build: '+(safe_url(os.getenv('BUILD_URL','')) or 'not available'),
-                        'Test Report: '+(safe_url(os.getenv('TEST_REPORT_URL','')) or 'not available'),finding['explanation']])})
+                        'Test Report: '+(safe_url(os.getenv('TEST_REPORT_URL','')) or 'not available'),finding['explanation']])},phase=phase)
                     action = 'commented'
                 else:
-                    created = client.request('POST','issue',payload)
+                    phase = 'create'
+                    created = client.request('POST','issue',payload,phase=phase)
                     key = created.get('key','')
                     if not re.fullmatch(re.escape(project)+r'-\d+',key):
                         raise JiraError('JIRA_HTTP')
@@ -210,14 +270,14 @@ def create_tickets(folder, approved, *, send=False, client=None):
                 issue = dict(finding_id=finding['finding_id'],key=key,url=site+'/browse/'+key,action=action,issue_type=issue_type,
                              attachments=0)
                 result['issues'].append(issue)  # Preserve created key even if attachment upload fails.
+                phase = 'attach'
                 attach(client,folder,key,paths)
                 issue['attachments'] = len(paths)
             except Exception as exc:
-                error = exc if isinstance(exc,JiraError) else JiraError('JIRA_HTTP')
-                result['errors'].append(dict(finding_id=finding['finding_id'],code=error.code,status=error.status))
+                result['errors'].append(dict(finding_id=finding['finding_id'],**error_record(exc,phase)))
     except Exception as exc:
         error = exc if isinstance(exc,JiraError) else JiraError('JIRA_CONFIG')
-        result['errors'].append(dict(code=error.code,status=error.status))
+        result['errors'].append(error_record(error,phase))
     (folder/'jira_payloads.json').write_text(json.dumps(payloads,ensure_ascii=False,indent=2))
     (folder/'jira_results.json').write_text(json.dumps(result,ensure_ascii=False,indent=2))
     return result

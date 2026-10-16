@@ -597,8 +597,8 @@ probability spread 列出每个问题/每个选项的 min/max、所选概率 min
 结果为 `audit_analysis.json` / `.md`；不重跑测试，不自动改变 verdict 或阈值。AI 推理只是建议；Python 校验引用、截图问答与 ticket 规则，校验失败允许一次有字段诊断的修正；多余但未声称画面内容的 screenshot ID 会移除并记录 stripped_screenshot_ids；部分成功时显示逐 case 覆盖和原因，零 case 成功才显示 unavailable banner，并在 JSON 标记 unanalysed，不使 build 因模型失败而中断。
 报告顶部只列需要行动的 finding；无须行动的分析默认折叠。只有有效 ticket 候选才触发 Jenkins 审批，所有 ticket 仍需人工批准。
 
-Jenkins 在无 executor/container 的 Review tickets input 中让人选择 finding（默认不选）；只有批准后才绑定 wbs-jira credential 发送。未批准、Abort、超时均不创建或评论。
-`jira_decision.json` 记录批准者/IDs/分析 hash，`jira_results.json` 记录 created/commented 链接与安全错误。
+Jenkins 在无 executor/container 的 Review tickets input 中让人选择 finding（默认不选）；点击 Create Jira ticket 批准后才发送；可选的 CHECK_JIRA_CONNECTION 参数会提前用 wbs-jira 做只读检查。未批准、Abort、超时均不创建或评论。
+`jira_decision.json` 记录批准者/IDs/分析 hash，`jira_results.json` 记录 created/commented 链接与安全的 phase/path-template 错误。审批页面显示本次 suite 的 Passed/Failed/Blocked 总数和每项一行的 short_reason。
 
 ```bash
 uv run python -m test_agent package artifacts/suite-<id> --output-dir reports
@@ -607,6 +607,14 @@ uv run python -m test_agent jira create reports --approved F-OSM-002-1 --dry-run
 
 Jira 默认离线 dry-run，写 `jira_payloads.json`，不进行 HTTP；实际发送必须显式 `--send` 与人工批准的 finding IDs。
 发送前发现 issue types，用稳定 fingerprint 搜索未完成 ticket（新 `/search/jql` endpoint），存在则评论本次 build，避免重复创建；附相关截图。
+Jira 404/认证问题先运行只读检查（本机 .env 需填与 Jenkins 相同账号的 email/token）：
+
+```bash
+uv run python -m test_agent jira check
+```
+
+只 GET 账号 display name、项目可见性与 issue types，不创建 ticket 或打印 email；Jenkins 也可勾选 CHECK_JIRA_CONNECTION 运行同样检查。
+旧分析缺少必填 short_reason 时，应重新审阅并批准新的分析 hash。
 Credential/token、审批页面、错误码和学习步骤见 [Jenkins guide](docs/ci/jenkins-guide.md)。
 
 自行测试 audit（本机现有演示 suite，不发送 Jira）：

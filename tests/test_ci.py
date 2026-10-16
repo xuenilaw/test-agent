@@ -100,3 +100,16 @@ class JenkinsSandboxTests(unittest.TestCase):
         self.assertIn('beforeAgent true',jira)
         self.assertIn('expression { !review.candidates.isEmpty() }',jira)
         self.assertLess(jira.index('when {'),jira.index('agent {'))
+
+
+    def test_approval_wording_and_optional_read_only_jira_check(self):
+        pipeline=(Path(__file__).resolve().parents[1]/'Jenkinsfile').read_text()
+        self.assertIn("ok: 'Create Jira ticket'",pipeline)
+        self.assertIn('message: review.approval_message',pipeline)
+        self.assertIn('review.suite_summary',pipeline)
+        self.assertIn("Cmd/Ctrl-click 'Test Report'",pipeline)
+        self.assertIn('(env.BUILD_URL ?',pipeline)
+        self.assertIn('Full analysis: open Test Report from the build page.',pipeline)
+        self.assertIn("booleanParam(name: 'CHECK_JIRA_CONNECTION', defaultValue: false",pipeline)
+        self.assertIn('when { expression { params.CHECK_JIRA_CONNECTION } }',pipeline)
+        self.assertIn('uv run python -m test_agent jira check',pipeline)

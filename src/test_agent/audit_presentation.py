@@ -52,3 +52,25 @@ def html_audit(analysis):
             ('<p class="plain-summary">'+escape(view['banner'])+'</p>' if view['banner'] else '')+
             '<h3>Needs your attention</h3>'+(''.join(map(card,view['attention'])) or '<p>None.</p>')+
             '<details><summary>No action needed</summary>'+''.join(map(card,view['no_action']))+'</details></section>')
+
+
+APPROVAL_MESSAGE = ("AI audit requires human approval. Tick the test case(s) you want to report, then click "
+                    "'Create Jira ticket'. Unticked items are not created.")
+CAUSE_NAMES = dict(software_bug='Software bug',test_case_problem='Test case problem',
+    test_tool_problem='Test tool problem',environment_problem='Environment problem',
+    possible_false_pass='Possible false pass',needs_human_review='Needs human review',confirmed_pass='Confirmed pass')
+
+
+def approval_dialog(analysis, suite_summary):
+    cases = suite_summary.get('cases',[])
+    counts = {s:sum(c.get('status')==s for c in cases) for s in ['PASSED','FAILED','BLOCKED']}
+    summary = (f"Total TC: {len(cases)}; Passed: {counts['PASSED']}; Failed: {counts['FAILED']}; Blocked: {counts['BLOCKED']}")
+    candidates = []
+    for f in analysis.get('findings',[]):
+        if not f['recommend_ticket']:
+            continue
+        reason = ' '.join(f['short_reason'].split())[:160]
+        candidates.append(dict(finding_id=f['finding_id'],description=escape(
+            f"{f['finding_id']} | {f['case_id']} | Cause: {CAUSE_NAMES[f['likely_cause']]} | "
+            f"Confidence: {f['confidence']} | Reason: {reason}",quote=True)))
+    return dict(approval_message=APPROVAL_MESSAGE,suite_summary=summary,candidates=candidates)

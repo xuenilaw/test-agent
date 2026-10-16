@@ -12,7 +12,9 @@ class TextModel(StrictModel):
     @classmethod
     def truncate_text(cls, value, info):
         limits = {"summary":800, "title":120, "explanation":800,
-                  "screenshot_observations":400, "suggested_next_step":300, "why":400, "observation":300}
+                  "short_reason":160, "screenshot_observations":400, "suggested_next_step":300, "why":400, "observation":300}
+        if info.field_name=='short_reason' and isinstance(value,str):
+            value = ' '.join(value.split())
         return value[:limits[info.field_name]] if isinstance(value,str) and info.field_name in limits else value
 
 
@@ -28,6 +30,7 @@ class Finding(TextModel):
     title: str = Field(min_length=1, max_length=120)
     likely_cause: Cause
     confidence: Literal['low', 'medium', 'high']
+    short_reason: str = Field(min_length=1, max_length=160, description='One sentence explaining why this finding matters.')
     explanation: str = Field(min_length=1, max_length=800)
     alternative_causes: list[Alternative] = Field(max_length=3)
     screenshot_observations: str = Field(max_length=400)

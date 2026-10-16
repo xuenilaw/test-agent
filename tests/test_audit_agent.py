@@ -45,7 +45,7 @@ def finding(dossier, *, cause=None, ticket=False):
     cause=cause or ('confirmed_pass' if dossier['status']=='PASSED' else 'needs_human_review')
     rows=[r['row_id'] for r in dossier['rows'] if r['row_type']=='check']
     return dict(finding_id='F-'+dossier['case_id']+'-1',case_id=dossier['case_id'],step=1,title='Check the expectation',
-        likely_cause=cause,confidence='medium',explanation='Compare the expected Topo selection with the observed evidence.',
+        likely_cause=cause,confidence='medium',short_reason='The observed duration needs comparison with the source expectation.',explanation='Compare the expected Topo selection with the observed evidence.',
         alternative_causes=[dict(cause='environment_problem',why='The page may not have settled.')],
         screenshot_observations='',suggested_next_step='Review the source expectation.',evidence_rows=rows,
         evidence_screenshots=[],evidence_questions=[],recommend_ticket=ticket,
@@ -516,6 +516,37 @@ class AuditAgentTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(questions.total,1)
             self.assertTrue(questions.repairs['CASE-3'])
             self.assertTrue(questions.questions[0]['answered'])
+
+
+    async def test_approval_dialog_uses_suite_totals_short_reason_and_escaped_one_line_labels(self):
+        from test_agent.audit_presentation import APPROVAL_MESSAGE
+        from pydantic import ValidationError
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);audit_fixture(root)
+            a=await run_audit_agent(root,analyst=fake_analyst,vision=FakeAuditVision())
+            f=next(f for f in a['findings'] if f['recommend_ticket'])
+            f.update(confidence='high',short_reason='The 776 km route takes 7:36, so the 180-minute limit is unrealistic.')
+            (root/'audit_analysis.json').write_text(json.dumps(a))
+            summary=json.loads((root/'summary.json').read_text());summary['cases'][2]['status']='PASSED'
+            (root/'summary.json').write_text(json.dumps(summary))
+            preview=approval_preview(root)
+            self.assertEqual(preview['approval_message'],APPROVAL_MESSAGE)
+            self.assertEqual(preview['suite_summary'],'Total TC: 3; Passed: 2; Failed: 1; Blocked: 0')
+            self.assertEqual(preview['candidates'][0]['description'],
+                'F-CASE-2-1 | CASE-2 | Cause: Test case problem | Confidence: high | Reason: '+f['short_reason'])
+            long=Finding.model_validate({**f,'short_reason':'Long reason.\n\r'+'x'*300})
+            self.assertEqual(len(long.short_reason),160)
+            self.assertNotIn('\n',long.short_reason)
+            self.assertNotIn('\r',long.short_reason)
+            for invalid in [{k:v for k,v in f.items() if k!='short_reason'},{**f,'short_reason':' \n '}]:
+                with self.assertRaises(ValidationError):Finding.model_validate(invalid)
+            f['short_reason']='<script>alert("x")</script> & risky\ntext'
+            (root/'audit_analysis.json').write_text(json.dumps(a))
+            label=approval_preview(root)['candidates'][0]['description']
+            self.assertIn('&lt;script&gt;',label)
+            self.assertIn('&amp;',label)
+            self.assertNotIn('<script>',label)
+            self.assertNotIn('\n',label)
 
 
 class AuditCliTests(unittest.TestCase):

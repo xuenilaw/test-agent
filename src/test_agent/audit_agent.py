@@ -9,7 +9,7 @@ from pathlib import Path
 
 from test_agent.audit import build_audit
 from test_agent.audit_validation import AuditRepairFailed, validate_submission
-from test_agent.audit_presentation import presentation, credential_warning
+from test_agent.audit_presentation import presentation, credential_warning, approval_dialog
 from test_agent.audit_vision import ScreenshotQuestions
 from test_agent.reporting import Report, read_json, short_text
 from test_agent.schemas.audit_analysis import submission_schema
@@ -42,7 +42,8 @@ alternative_causes and ask for review. test_case_fix requires test_case_problem.
 environment/tool problems or needs_human_review. Evidence must belong to this case; never invent
 row, screenshot or answered question ids. Cite the dossier's source actions and expected text.
 finding_id must start F and be unique across cases, e.g. F-OSM-002-1.
-AI suggestions are provisional: distinguish observations from hypotheses.
+AI suggestions are provisional: distinguish observations from hypotheses. Supply short_reason as one
+plain sentence (at most 160 characters) summarizing why the finding matters; keep detail in explanation.
 When ready, call submit_analysis with the complete structured analysis. This submits a draft
 only; it never creates tickets. It is the required and only way to submit your final answer.
 Reduce human work: medium/high confirmed passes and explained failures without tickets need no
@@ -306,11 +307,6 @@ def approval_preview(folder):
                       for f in view['attention']],analysis_sha256=hashlib.sha256((folder/'audit_analysis.json').read_bytes()).hexdigest(),
                   possible_false_passes=[f['finding_id'] for f in analysis.get('findings',[]) if f['likely_cause']=='possible_false_pass'],
                   candidates=[])
-    for f in analysis.get('findings',[]):
-        if f['recommend_ticket']:
-            d = analysis['cases'][f['case_id']]
-            text = (f"{f['finding_id']} | {f['case_id']} | {f['likely_cause']} ({f['confidence']}) | {f['ticket_type']}\n"
-                    f"{f['title']}\nNext: {f['suggested_next_step']}\nRows: {', '.join(f['evidence_rows'])}\nDesigned: {d['designed_outcome']}")
-            result['candidates'].append(dict(finding_id=f['finding_id'],description=text.replace('<','‹').replace('>','›')))
+    result.update(approval_dialog(analysis,read_json(folder/'summary.json')))
     (folder/'audit_review.json').write_text(json.dumps(result,ensure_ascii=False,indent=2))
     return result

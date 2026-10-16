@@ -137,6 +137,7 @@ def main(argv: list[str] | None = None) -> int:
     analyst_parser.add_argument('--unavailable',action='store_true',help='Record unanalysed cases without model requests (CI configuration failure)')
     jira_parser = commands.add_parser('jira',help='Approval-gated Jira export (offline dry-run by default)')
     jira_commands = jira_parser.add_subparsers(dest='jira_command',required=True)
+    jira_commands.add_parser('check',help='Read-only Jira authentication, project and issue-type check')
     jira_create = jira_commands.add_parser('create')
     jira_create.add_argument('folder',type=Path)
     jira_create.add_argument('--approved',required=True,help='Comma-separated finding IDs explicitly approved by the human')
@@ -227,9 +228,19 @@ def main(argv: list[str] | None = None) -> int:
             print('AUDIT_UNAVAILABLE: inspect saved suite evidence; no tickets recommended')
         return 0
     if args.command == 'jira':
-        from test_agent.jira import create_tickets
+        from test_agent.jira import create_tickets, check_connection, error_line
         load_dotenv(args.project_dir.resolve()/'.env')
+        if args.jira_command=='check':
+            result = check_connection()
+            for check in result['checks']:
+                detail = check.get('display_name') or ', '.join(check.get('issue_types',[]))
+                print(f"Jira {check['phase']}: {check['status']}"+(' — '+detail if detail else ''))
+            for error in result['errors']:
+                print(error_line(error,os.getenv('JIRA_PROJECT','WBSFP')))
+            return 1 if result['errors'] else 0
         result = create_tickets(args.folder,list(dict.fromkeys(i.strip() for i in args.approved.split(',') if i.strip())),send=args.send)
+        for error in result['errors']:
+            print(error_line(error,os.getenv('JIRA_PROJECT','WBSFP')))
         print(json.dumps(result,indent=2))
         return 1 if result['errors'] else 0
     if args.command in {'report','repeat','audit','junit','package','prune'}:

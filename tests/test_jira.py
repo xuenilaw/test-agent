@@ -1,5 +1,6 @@
 """Only fake HTTP: approvals, payloads, deduplication, attachments, safe errors."""
 import copy
+import contextlib
 import hashlib
 import io
 import json
@@ -14,19 +15,28 @@ from test_audit_agent import audit_fixture, fake_analyst, FakeAuditVision
 from test_vision import FakeHTTP
 from test_agent.audit_agent import run_audit_agent
 from test_agent.artifacts import package_reports
-from test_agent.jira import JiraClient, create_tickets, payload_for
+from test_agent.jira import JiraClient, create_tickets, payload_for, check_connection, error_line, PATH_TEMPLATES
+from test_agent.cli import main
 
 
 class FakeJiraHTTP:
-    def __init__(self, *, bug=True, duplicate=False, error=None):
+    def __init__(self, *, bug=True, duplicate=False, error=None, error_phase=None):
         self.bug,self.duplicate,self.error=bug,duplicate,error
-        self.calls=[]
+        self.calls=[];self.error_phase=error_phase
     def __call__(self,request,timeout):
         self.calls.append(request)
-        if self.error:
+        path=request.full_url
+        phase=('issue_types' if 'createmeta' in path else 'search' if path.endswith('/search/jql') else
+               'create' if path.endswith('/issue') else 'comment' if path.endswith('/comment') else
+               'attach' if path.endswith('/attachments') else 'auth' if path.endswith('/myself') else 'project')
+        if self.error and (self.error_phase is None or phase==self.error_phase):
             raise HTTPError(request.full_url,self.error,'do not expose token or response',{},io.BytesIO(b'private body'))
         path=request.full_url
-        if 'createmeta' in path:
+        if path.endswith('/myself'):
+            data=dict(displayName='Test Engineer',emailAddress='private-email@example.test',accountId='private-account-id')
+        elif path.endswith('/project/WBSFP'):
+            data=dict(key='WBSFP',email='private-email@example.test')
+        elif 'createmeta' in path:
             data=dict(issueTypes=[dict(id='2',name='Task',subtask=False)]+([dict(id='1',name='Bug',subtask=False)] if self.bug else []),isLast=True)
         elif path.endswith('/search/jql'):
             data=dict(issues=[dict(key='WBSFP-42')] if self.duplicate else [])
@@ -124,3 +134,74 @@ class JiraTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result['errors'][0]['code'],code)
                 self.assertEqual(result['errors'][0]['status'],status)
                 self.assertNotIn('private body',json.dumps(result));self.assertNotIn('token',json.dumps(result))
+
+
+    async def assert_phase_404(self,phase):
+        with tempfile.TemporaryDirectory() as temp:
+            reports,f=await self.prepare(Path(temp))
+            http=FakeJiraHTTP(error=404,error_phase=phase,duplicate=phase=='comment')
+            client=JiraClient('https://lawxueni.atlassian.net','WBSFP','private-email@example.test','private-token',opener=http)
+            result=create_tickets(reports,[f['finding_id']],send=True,client=client)
+            error=result['errors'][0]
+            self.assertEqual((error['status'],error['phase'],error['path_template']),(404,phase,PATH_TEMPLATES[phase]))
+            text=json.dumps(result['errors'])
+            for secret in ['private-email','private-token','private body','startAt','maxResults','https://']:
+                self.assertNotIn(secret,text)
+            self.assertIn('Jira 404 during '+phase,error_line(error,'WBSFP'))
+            if phase=='issue_types':
+                self.assertIn("project WBSFP not found or not visible to the credential's account",error_line(error,'WBSFP'))
+            if phase=='attach':self.assertEqual(result['issues'][0]['key'],'WBSFP-43')
+
+    async def test_404_during_issue_types_is_diagnosable(self):await self.assert_phase_404('issue_types')
+    async def test_404_during_search_is_diagnosable(self):await self.assert_phase_404('search')
+    async def test_404_during_create_is_diagnosable(self):await self.assert_phase_404('create')
+    async def test_404_during_comment_is_diagnosable(self):await self.assert_phase_404('comment')
+    async def test_404_during_attach_is_diagnosable(self):await self.assert_phase_404('attach')
+
+
+class JiraCheckTests(unittest.TestCase):
+    def test_check_uses_only_get_and_returns_no_email_or_account_id(self):
+        http=FakeJiraHTTP()
+        client=JiraClient('https://lawxueni.atlassian.net','WBSFP','private-email@example.test','private-token',opener=http)
+        result=check_connection(client=client)
+        self.assertEqual(result['errors'],[])
+        self.assertEqual([c['phase'] for c in result['checks']],['auth','project','issue_types'])
+        self.assertEqual(result['checks'][0]['display_name'],'Test Engineer')
+        self.assertEqual(result['checks'][2]['issue_types'],['Bug','Task'])
+        self.assertTrue(all(r.method=='GET' for r in http.calls))
+        self.assertEqual([r.full_url.split('/rest/api/3/')[1].split('?')[0] for r in http.calls],
+                         ['myself','project/WBSFP','issue/createmeta/WBSFP/issuetypes'])
+        self.assertNotIn('private-',json.dumps(result))
+
+    def test_check_404_reports_each_read_phase_and_stops(self):
+        for phase,count in [('auth',1),('project',2),('issue_types',3)]:
+            with self.subTest(phase=phase):
+                http=FakeJiraHTTP(error=404,error_phase=phase)
+                client=JiraClient('https://lawxueni.atlassian.net','WBSFP','fake','fake',opener=http)
+                result=check_connection(client=client)
+                self.assertEqual(len(http.calls),count)
+                self.assertEqual(result['errors'][0]['phase'],phase)
+                self.assertEqual(result['errors'][0]['path_template'],PATH_TEMPLATES[phase])
+
+    def test_check_cli_prints_safe_statuses_and_failure_has_nonzero_exit(self):
+        for status in [None,401,404]:
+            with self.subTest(status=status),tempfile.TemporaryDirectory() as temp:
+                http=FakeJiraHTTP(error=status,error_phase='project' if status==404 else 'auth')
+                client=JiraClient('https://lawxueni.atlassian.net','WBSFP','private-email@example.test','private-token',opener=http)
+                out=io.StringIO()
+                with patch.dict(os.environ,{},clear=True),patch('test_agent.jira.JiraClient',return_value=client),contextlib.redirect_stdout(out):
+                    code=main(['--project-dir',temp,'jira','check'])
+                self.assertEqual(code,0 if status is None else 1)
+                self.assertEqual(list(Path(temp).iterdir()),[])
+                text=out.getvalue()
+                for secret in ['private-email','private-token','private body','private-account-id']:
+                    self.assertNotIn(secret,text)
+                if status is None:
+                    self.assertIn('Jira auth: OK — Test Engineer',text)
+                    self.assertIn('Jira issue_types: OK — Bug, Task',text)
+                elif status==404:self.assertIn('Jira 404 during project',text)
+                else:self.assertIn('Jira 401 during auth',text)
+
+    def test_email_shaped_display_name_is_redacted(self):
+        from test_agent.jira import public_name
+        self.assertEqual(public_name('Name private-email@example.test\nextra'), 'Name [redacted] extra')

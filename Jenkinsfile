@@ -10,6 +10,10 @@ pipeline {
         buildDiscarder(logRotator(numToKeepStr: '10'))
     }
     triggers { pollSCM('H/5 * * * *') }
+    parameters {
+        booleanParam(name: 'CHECK_JIRA_CONNECTION', defaultValue: false,
+            description: 'Run read-only Jira authentication, project and issue-type checks.')
+    }
     environment {
         VISION_PROVIDER = 'clef'
         VISION_MODEL = 'cloudflare/clef'
@@ -40,6 +44,16 @@ pipeline {
                             python -m pip install --disable-pip-version-check uv==0.12.17
                             uv sync --locked
                         '''
+                    }
+                }
+                stage('Jira connection check') {
+                    when { expression { params.CHECK_JIRA_CONNECTION } }
+                    steps {
+                        catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE', catchInterruptions: false) {
+                            withCredentials([usernamePassword(credentialsId: 'wbs-jira', usernameVariable: 'JIRA_EMAIL', passwordVariable: 'JIRA_API_TOKEN')]) {
+                                sh 'uv run python -m test_agent jira check'
+                            }
+                        }
                     }
                 }
                 stage('Unit tests') {
@@ -129,10 +143,11 @@ pipeline {
                     try {
                         def answer
                         timeout(time: 30, unit: 'MINUTES') {
-                            answer = input(message: "AI suggestion, verify before acting. Select only tickets you approve.\n" +
-                                "${review.attention_count} attention items (information only). ${review.summary}\n" +
-                                "Full analysis: ${env.BUILD_URL}artifact/reports/audit_analysis.md",
-                                ok: 'Record decision', submitterParameter: 'APPROVER', parameters: choices)
+                            answer = input(message: review.approval_message + "\n" + review.suite_summary + "\n" +
+                                "Analysis: Cmd/Ctrl-click 'Test Report' in this build's sidebar to open it in a new tab.\n" +
+                                (env.BUILD_URL ? "Full analysis: ${env.BUILD_URL}artifact/reports/audit_analysis.md" :
+                                    "Full analysis: open Test Report from the build page."),
+                                ok: 'Create Jira ticket', submitterParameter: 'APPROVER', parameters: choices)
                         }
                         decision.approved = review.candidates.findAll { answer[it.finding_id] == true }.collect { it.finding_id }
                         decision.approved_by = answer.APPROVER
