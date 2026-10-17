@@ -1,17 +1,18 @@
 """One attention policy shared by Markdown, HTML and Jenkins approval metadata."""
 from html import escape
+from test_agent.audit_validation import ticket_type_for
 
 
 def presentation(analysis):
     attention, quiet = [], []
     cases = analysis.get('cases',{})
     for f in analysis.get('findings',[]):
-        needed = (f['recommend_ticket'] or f['likely_cause'] in {'possible_false_pass','needs_human_review'} or
+        needed = (ticket_type_for(f,cases[f['case_id']]) or f['likely_cause'] in {'possible_false_pass','needs_human_review'} or
                   (cases[f['case_id']]['status'] in {'FAILED','BLOCKED'} and f['confidence']=='low'))
         (attention if needed else quiet).append(f)
     covered = {f['case_id'] for f in attention+quiet}
     attention_cases = {f['case_id'] for f in attention}
-    tickets = sum(f['recommend_ticket'] for f in attention)
+    tickets = sum(bool(ticket_type_for(f,cases[f['case_id']])) for f in attention)
     summary = (f'Audited {len(covered)} '+('case' if len(covered)==1 else 'cases')+f': {len(covered-attention_cases)} no action, '
                f'{len(attention_cases)} needs your attention ({tickets} ticket suggestion'+('' if tickets==1 else 's')+').')
     missing = len(cases)-len(covered)
@@ -44,8 +45,8 @@ def html_audit(analysis):
     view = presentation(analysis)
     def card(f):
         text = (f['finding_id']+' · '+f['case_id']+' · '+f['title']+' — '+f['likely_cause']+
-                ' ('+f['confidence']+'). '+f['explanation']+' Next: '+f['suggested_next_step']+
-                (' Ticket suggestion: approval required.' if f['recommend_ticket'] else '')+
+                ' ('+f['confidence']+'). '+f['explanation']+' AI ticket advice: '+str(f['recommend_ticket'])+' Next: '+f['suggested_next_step']+
+                (' Ticket suggestion: approval required.' if ticket_type_for(f,analysis['cases'][f['case_id']]) else '')+
                 (' ⚠ possible false pass, please check.' if f['likely_cause']=='possible_false_pass' else ''))
         return '<p>'+escape(text)+'</p>'
     return ('<section aria-label="AI audit"><h2>AI audit</h2><p>'+escape(view['summary'])+'</p>'+
@@ -67,7 +68,7 @@ def approval_dialog(analysis, suite_summary):
     summary = (f"Total TC: {len(cases)}; Passed: {counts['PASSED']}; Failed: {counts['FAILED']}; Blocked: {counts['BLOCKED']}")
     candidates = []
     for f in analysis.get('findings',[]):
-        if not f['recommend_ticket']:
+        if not ticket_type_for(f,analysis['cases'][f['case_id']]):
             continue
         reason = ' '.join(f['short_reason'].split())[:160]
         candidates.append(dict(finding_id=f['finding_id'],description=escape(

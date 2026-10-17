@@ -1,5 +1,5 @@
 # Task: Post Actions fix + audit agent → Jenkins approval → Jira (diagram steps 8–10)
-Status: APPROVED (round 7); live Jira acceptance pending
+Status: APPROVED (round 8); dedup acceptance pending
 Workflow step(s): 8 (report/audit agent), 9 (human in the loop), 10 (Jira)
 Assigned: Codex · Reviewer: Claude · Brief written 2026-10-16
 
@@ -2613,3 +2613,273 @@ Verdict: **APPROVED. Commit and push.** Verified: 180 tests OK; Jenkinsfile has 
 optional read-only `CHECK_JIRA_CONNECTION`; Jira errors carry phase + path template only; the seven v3 paths were checked against the official OpenAPI. Clickable links: the controller uses the default
 Plain text formatter, so the dialog points to the clickable **Test Report** sidebar (Cmd/Ctrl-click for a new tab). That's acceptable without relaxing security.
 The user corrected the `wbs-jira` email (2026-10-16). Recommended order: push → "Build with Parameters" with **CHECK_JIRA_CONNECTION ✓** (proves auth + WBSFP visibility) → approve → issue.
+
+## Acceptance (Claude, 2026-10-17)
+**End-to-end flow works in the real Jenkins**, as verified by the reviewer in the controller:
+- Build #12: the `CHECK_JIRA_CONNECTION` run → `Jira auth: OK` (corrected `wbs-jira` email).
+- Build #13 (commit `b04af04`, UNSTABLE as designed): audit headline "Audited 3 cases: 2 no action, 1 needs your attention (1 ticket suggestion)"; the user approved `F-OSM-002-1` in the dialog;
+  **`WBSFP-1` was created** (`action: created`, issue type **Task** for `test_case_fix`, **2 screenshots attached**), and the build description links https://lawxueni.atlassian.net/browse/WBSFP-1.
+- The finding carries `step: 5` and a one-sentence `short_reason`; the fingerprint label is `wbs-osm-002-step5-596e53579875` (case + step + Excel text + ticket type).
+
+Open: one more build, approving the same suggestion → expect `action: commented` on WBSFP-1, not a new issue. Residual risk (documented, acceptable): if a later audit chooses a different step or ticket type for
+the same problem, the fingerprint differs and a second ticket is created; the human approval step is where that's caught.
+
+## Review round 8: builds #14 and #15, dedup failed (Claude, 2026-10-17)
+Evidence (read in the controller):
+- **Build #14:** OSM-002 = `test_case_problem`, **high**, but the AI set **no ticket** → "0 ticket suggestions" → Review tickets and Record decision **skipped by their `when`** (the user saw "empty" stages).
+- **Build #15:** the same problem, approved → **duplicate `WBSFP-2` created**. WBSFP-1's label is `wbs-osm-002-step5-596e53579875` (the AI set `step: 5`); build #15's finding had `step: null` →
+  `wbs-osm-002-stepcase-a5fa2c19fefc` → no match → a new issue. (The residual risk named in the acceptance note happened on the very next build.)
+Root cause of both: **AI-chosen fields drive deterministic decisions** (whether a ticket is suggested; the dedup identity). The project principle is that Python decides.
+
+1. **MUST: Python decides ticket candidates.** A finding becomes a ticket candidate **by rule**, not by the AI's `recommend_ticket`:
+   `software_bug` + ≥ 1 cited FAILED check row → `bug`; `test_case_problem` + ≥ 1 cited FAILED check row → `test_case_fix`. Everything else → no candidate. Keep the AI's `recommend_ticket` only as
+   an advisory field, shown in the analysis. Same evidence + same cause → same candidate on every build. Test: the build #14 shape (test_case_problem, high, recommend_ticket false) → a candidate.
+   > Codex: Fixed in `audit_validation.py`, `audit_presentation.py`, `audit_agent.py` and `jira.py`: shared Python candidate/type policy is used for reports, approval and sending. AI recommendation/type remain advisory and visible. Fake build #14-shaped output reaches approval even with recommend_ticket=false; non-candidate categories and BLOCKED-only evidence do not.
+2. **MUST: a deterministic fingerprint, independent of AI wording and AI-chosen fields.** Identity = `case_id` + the **failing step number(s) derived by Python from the cited FAILED rows** (sorted; if
+   there are none, the cited BLOCKED rows) + those steps' **Excel expected text**. Exclude `finding.step`, `ticket_type`, the title and the explanation. If `finding.step` is null and all cited non-case rows share one
+   step, fill it in deterministically (for display). Before creating, also search for an open issue with the **legacy** label shape for that case, so the existing WBSFP-1 is matched; if more than one open
+   issue matches, comment on the **oldest** one and log that duplicates exist.
+   Tests: step 5 vs `step: null` with the same FAILED row → the same label; a different failing step → a different label; legacy-label match → comment.
+   > Codex: Fixed in `jira.py` / `audit_validation.py`: v2 identity uses cited FAILED steps (BLOCKED fallback) + Excel expected + case ID, independently of AI fields. Null display step is inferred from single-step cited evidence. Paginated exact/legacy search selects oldest open match and logs duplicate_keys/warning. Tests cover stable/changed identities, sorting, legacy matches and unsafe search responses.
+3. **Docs (guide):** "If nobody answers the approval within 30 minutes, nothing is created and the stages show as aborted/not run; if the audit suggests no ticket, both stages are skipped by
+   design." And: `CHECK_JIRA_CONNECTION` is only for troubleshooting (after changing credentials or on a Jira error), not for every build.
+   > Codex: Updated guide sections 11–14: mechanism table/example, candidate/dedup rules, timeout/aborted/not-run and intentionally skipped stages, plus CHECK_JIRA_CONNECTION as troubleshooting only. Clarified that the caught timeout may still run the decision-recording stage without sending.
+User action: in Jira, close **WBSFP-2** as a duplicate of WBSFP-1 (link "duplicates" → WBSFP-1), so only one open issue remains.
+
+
+## Handoff (Codex, 2026-10-17) — Review round 8
+
+### Goal
+Fix MUST 1–2 and docs item 3: make candidates and deduplication deterministic, and explain the Python/LLM/human responsibilities.
+Workflow steps: saved test evidence → audit analysis → human ticket approval → Jira deduplication / write.
+
+### What changed
+- `src/test_agent/audit_validation.py`: shared candidate policy, evidence-derived source steps and null display-step inference. Model ticket advice does not gate valid findings.
+- `src/test_agent/audit_presentation.py`, `src/test_agent/audit_agent.py`: Markdown/HTML, attention counts and approval candidates use the Python policy; AI advice remains visible separately; analyst instructions explain the split.
+- `src/test_agent/jira.py`: sender independently rechecks policy; v2 fingerprint excludes all AI-chosen identity fields and source actions; paginated exact/legacy matching chooses oldest open issue and logs duplicate keys. Incomplete/malformed search responses fail safely before creation.
+- `tests/test_audit_agent.py`, `tests/test_jira.py`: five new regression tests plus updated assertions for intentional report wording and advisory-only fields.
+- `docs/ci/jenkins-guide.md`, `README.md`: updated mechanism, candidate/dedup rules, timeout/skip behavior and troubleshooting parameter guidance.
+
+### How to verify
+```sh
+uv run python -m unittest discover -s tests -v
+git diff --check
+```
+After Claude review and user-authorized commit/push: run the same suite in Jenkins and approve the OSM-002 suggestion; expect a comment on WBSFP-1, not a new issue. CHECK_JIRA_CONNECTION is optional for credential/error troubleshooting, not required each build.
+
+### Known limitations / open questions
+- No live Jira / LLM requests were made for this task. Tests use fake providers and HTTP; actual next-build acceptance remains with the user.
+- Claude still chooses likely cause and cited evidence. Same cause + same cited evidence gives the same candidate; v2 identity no longer depends on finding.step, ticket type or prose.
+- Legacy fallback deliberately matches old labels for the entire case, as requested, and may match a different historical problem in that case. Human approval remains required. Multiple matches are listed in jira_results.json and the oldest receives the comment.
+- Existing schema/evidence guards remain, including rejecting software_bug without a substantive FAILED check; advisory true cannot bypass them.
+- The user still needs to close WBSFP-2 as a duplicate of WBSFP-1 in Jira; this task did not modify either live ticket.
+- The first full run found one stale report-wording assertion (184/185 passed); updated it to the new Python-rule wording. Final full run below passed. `git diff --check` passed.
+- No commits or pushes made. Ready for Claude review through this file.
+
+### Test output — final full unittest run
+```text
+test_all_row_types_statuses_vision_healing_paths_and_formula_safety (test_audit.AuditTests.test_all_row_types_statuses_vision_healing_paths_and_formula_safety) ... ok
+test_csv_prefix_and_truncation_and_invalid_cli (test_audit.AuditTests.test_csv_prefix_and_truncation_and_invalid_cli) ... ok
+test_html_locator_wording_keeps_raw_csv (test_audit.AuditTests.test_html_locator_wording_keeps_raw_csv) ... ok
+test_missing_results_still_exports_case_and_rejects_outside_evidence (test_audit.AuditTests.test_missing_results_still_exports_case_and_rejects_outside_evidence) ... ok
+test_repeat_indexes_and_row_ids_are_stable (test_audit.AuditTests.test_repeat_indexes_and_row_ids_are_stable) ... ok
+test_approval_dialog_uses_suite_totals_short_reason_and_escaped_one_line_labels (test_audit_agent.AuditAgentTests.test_approval_dialog_uses_suite_totals_short_reason_and_escaped_one_line_labels) ... ok
+test_claude_only_native_tool_loop_covers_all_cases_without_glm (test_audit_agent.AuditAgentTests.test_claude_only_native_tool_loop_covers_all_cases_without_glm) ... ok
+test_claude_request_blind_one_png_and_native_size_guard (test_audit_agent.AuditAgentTests.test_claude_request_blind_one_png_and_native_size_guard) ... ok
+test_dossiers_valid_analysis_all_cases_and_packaged_link (test_audit_agent.AuditAgentTests.test_dossiers_valid_analysis_all_cases_and_packaged_link) ... ok
+test_dropped_model_finding_preserves_valid_sibling_and_false_pass_warning (test_audit_agent.AuditAgentTests.test_dropped_model_finding_preserves_valid_sibling_and_false_pass_warning) ... ok
+test_envelope_diagnostics_and_attention_groups (test_audit_agent.AuditAgentTests.test_envelope_diagnostics_and_attention_groups) ... ok
+test_evidence_rejections_and_human_fallbacks (test_audit_agent.AuditAgentTests.test_evidence_rejections_and_human_fallbacks) ... ok
+test_false_pass_requires_certain_comparable_contradiction_no_ticket (test_audit_agent.AuditAgentTests.test_false_pass_requires_certain_comparable_contradiction_no_ticket) ... ok
+test_missing_claude_key_never_uses_glm_credentials (test_audit_agent.AuditAgentTests.test_missing_claude_key_never_uses_glm_credentials) ... ok
+test_native_one_repair_and_safe_field_errors (test_audit_agent.AuditAgentTests.test_native_one_repair_and_safe_field_errors) ... ok
+test_native_partial_audit_retains_ticket_after_failed_sibling_repair (test_audit_agent.AuditAgentTests.test_native_partial_audit_retains_ticket_after_failed_sibling_repair) ... ok
+test_native_tool_errors_limits_and_incomplete_output (test_audit_agent.AuditAgentTests.test_native_tool_errors_limits_and_incomplete_output) ... ok
+test_python_candidate_policy_ignores_ai_ticket_advice (test_audit_agent.AuditAgentTests.test_python_candidate_policy_ignores_ai_ticket_advice) ... ok
+test_repair_can_ask_about_a_missing_screenshot_before_resubmitting (test_audit_agent.AuditAgentTests.test_repair_can_ask_about_a_missing_screenshot_before_resubmitting) ... ok
+test_tool_rejections_limits_errors_and_uncertainty (test_audit_agent.AuditAgentTests.test_tool_rejections_limits_errors_and_uncertainty) ... ok
+test_unused_screenshot_ids_strip_without_weakening_claim_guards (test_audit_agent.AuditAgentTests.test_unused_screenshot_ids_strip_without_weakening_claim_guards) ... ok
+test_auth_note_covers_blind_image_rejections_without_echoing_messages (test_audit_agent.AuditCliTests.test_auth_note_covers_blind_image_rejections_without_echoing_messages) ... ok
+test_auth_rejection_is_explicit_in_console_and_review_metadata (test_audit_agent.AuditCliTests.test_auth_rejection_is_explicit_in_console_and_review_metadata) ... ok
+test_ci_unavailable_mode_never_calls_models_and_still_writes_review (test_audit_agent.AuditCliTests.test_ci_unavailable_mode_never_calls_models_and_still_writes_review) ... ok
+test_partial_cli_reports_coverage_and_keeps_a_ticket_candidate (test_audit_agent.AuditCliTests.test_partial_cli_reports_coverage_and_keeps_a_ticket_candidate) ... ok
+test_arithmetic_and_threshold_replay (test_calibration.CalibrationTests.test_arithmetic_and_threshold_replay) ... ok
+test_bad_labels_rejected (test_calibration.CalibrationTests.test_bad_labels_rejected) ... ok
+test_capture_excludes_overlay_and_never_overwrites_frozen_set (test_calibration.CalibrationTests.test_capture_excludes_overlay_and_never_overwrites_frozen_set) ... ok
+test_offline_run_counts_error_and_saves_report (test_calibration.CalibrationTests.test_offline_run_counts_error_and_saves_report) ... correct.png 1/2: PASSED
+correct.png 2/2: BLOCKED
+wrong.png 1/2: FAILED
+wrong.png 2/2: FAILED
+ok
+test_pure_decision_threshold_boundary_and_no_mutation (test_calibration.CalibrationTests.test_pure_decision_threshold_boundary_and_no_mutation) ... ok
+test_browser_detection_respects_configured_path (test_ci.CIResultTests.test_browser_detection_respects_configured_path) ... ok
+test_completed_test_outcomes_are_distinct_from_infrastructure_errors (test_ci.CIResultTests.test_completed_test_outcomes_are_distinct_from_infrastructure_errors) ... ok
+test_crash_missing_partial_or_malformed_evidence_is_failure (test_ci.CIResultTests.test_crash_missing_partial_or_malformed_evidence_is_failure) ... ok
+test_junit_cleanup_errors_agree_with_publisher_and_bad_xml_is_failure (test_ci.CIResultTests.test_junit_cleanup_errors_agree_with_publisher_and_bad_xml_is_failure) ... ok
+test_approval_wording_and_optional_read_only_jira_check (test_ci.JenkinsSandboxTests.test_approval_wording_and_optional_read_only_jira_check) ... ok
+test_guard_catches_restricted_parsing_files_and_processes (test_ci.JenkinsSandboxTests.test_guard_catches_restricted_parsing_files_and_processes) ... ok
+test_no_candidates_skip_jira_before_allocating_its_docker_agent (test_ci.JenkinsSandboxTests.test_no_candidates_skip_jira_before_allocating_its_docker_agent) ... ok
+test_pipeline_uses_pinned_sandbox_safe_json_steps (test_ci.JenkinsSandboxTests.test_pipeline_uses_pinned_sandbox_safe_json_steps) ... ok
+test_http_status_only_no_error_body_and_no_retry (test_clef_smoke.ClefSmokeTests.test_http_status_only_no_error_body_and_no_retry) ... ok
+test_missing_key_blocks_without_request_and_saves_safe_output (test_clef_smoke.ClefSmokeTests.test_missing_key_blocks_without_request_and_saves_safe_output) ... ok
+test_text_only_decisions_request_shape_and_metadata (test_clef_smoke.ClefSmokeTests.test_text_only_decisions_request_shape_and_metadata) ... ok
+test_unknown_choice_or_missing_probabilities_rejected (test_clef_smoke.ClefSmokeTests.test_unknown_choice_or_missing_probabilities_rejected) ... ok
+test_claude_uses_exact_jpeg_without_prompt_change (test_clef_vision.ClefVisionTests.test_claude_uses_exact_jpeg_without_prompt_change) ... ok
+test_frozen_jpeg_integrity_calibration_and_no_overwrite (test_clef_vision.ClefVisionTests.test_frozen_jpeg_integrity_calibration_and_no_overwrite) ... hamburg-berlin.png 1/1: PASSED
+ok
+test_probability_decisions_and_threshold_replay (test_clef_vision.ClefVisionTests.test_probability_decisions_and_threshold_replay) ... ok
+test_request_shape_and_evidence_exact_jpeg (test_clef_vision.ClefVisionTests.test_request_shape_and_evidence_exact_jpeg) ... ok
+test_unknown_option_is_schema_and_click_refused (test_clef_vision.ClefVisionTests.test_unknown_option_is_schema_and_click_refused) ... ok
+test_absent_sidecar_does_not_apply_osm_project_contract (test_cli.PackageCliTests.test_absent_sidecar_does_not_apply_osm_project_contract) ... ok
+test_case_id_cannot_escape_artifact_directory (test_cli.PackageCliTests.test_case_id_cannot_escape_artifact_directory) ... ok
+test_explicit_missing_contract_path_rejected_before_model_call (test_cli.PackageCliTests.test_explicit_missing_contract_path_rejected_before_model_call) ... ok
+test_invalid_plan_saves_rejection_without_approved_plan (test_cli.PackageCliTests.test_invalid_plan_saves_rejection_without_approved_plan) ... ok
+test_malformed_contract_rejected_before_model_call (test_cli.PackageCliTests.test_malformed_contract_rejected_before_model_call) ... ok
+test_malformed_vocabulary_rejected_before_model_call (test_cli.PackageCliTests.test_malformed_vocabulary_rejected_before_model_call) ... ok
+test_missing_case_does_not_call_model (test_cli.PackageCliTests.test_missing_case_does_not_call_model) ... ok
+test_package_entry_point_works_outside_project_directory (test_cli.PackageCliTests.test_package_entry_point_works_outside_project_directory) ... ok
+test_removed_amendment_option_is_rejected (test_cli.PackageCliTests.test_removed_amendment_option_is_rejected) ... ok
+test_sidecar_without_selected_case_reports_no_contract (test_cli.PackageCliTests.test_sidecar_without_selected_case_reports_no_contract) ... ok
+test_translate_preserves_plan_and_writes_case_scoped_evidence (test_cli.PackageCliTests.test_translate_preserves_plan_and_writes_case_scoped_evidence) ... ok
+test_unknown_action_check_and_cleanup_targets_rejected_during_translation (test_cli.PackageCliTests.test_unknown_action_check_and_cleanup_targets_rejected_during_translation) ... ok
+test_cost_and_cohort_alignment (test_comparison.ComparisonTests.test_cost_and_cohort_alignment) ... ok
+test_different_jpeg_bytes_cannot_be_claimed_same_input (test_comparison.ComparisonTests.test_different_jpeg_bytes_cannot_be_claimed_same_input) ... ok
+test_already_visible_effect_or_noncoordinate_provider_blocks (test_day5.FaultBrowserTests.test_already_visible_effect_or_noncoordinate_provider_blocks) ... ok
+test_blank_tiles_unclear_blocks_but_duration_still_runs (test_day5.FaultBrowserTests.test_blank_tiles_unclear_blocks_but_duration_still_runs) ... ok
+test_broken_locator_uses_private_cache_even_if_shared_cache_exists (test_day5.FaultBrowserTests.test_broken_locator_uses_private_cache_even_if_shared_cache_exists) ... ok
+test_click_without_effect_blocks_and_does_not_retry (test_day5.FaultBrowserTests.test_click_without_effect_blocks_and_does_not_retry) ... ok
+test_directions_503_stops_steps_and_does_not_call_vision (test_day5.FaultBrowserTests.test_directions_503_stops_steps_and_does_not_call_vision) ... ok
+test_forced_vision_click_passes_with_effect_and_evidence (test_day5.FaultBrowserTests.test_forced_vision_click_passes_with_effect_and_evidence) ... ok
+test_missing_declaration_or_human_effect_forbids_fallback (test_day5.FaultBrowserTests.test_missing_declaration_or_human_effect_forbids_fallback) ... ok
+test_normal_resolution_then_failed_heal_can_fall_back_once (test_day5.FaultBrowserTests.test_normal_resolution_then_failed_heal_can_fall_back_once) ... ok
+test_rejected_points_never_click (test_day5.FaultBrowserTests.test_rejected_points_never_click) ... ok
+test_successful_human_action_never_uses_vision_and_missing_check_never_falls_back (test_day5.FaultBrowserTests.test_successful_human_action_never_uses_vision_and_missing_check_never_falls_back) ... ok
+test_check_only_or_undeclared_target_rejected (test_day5.FaultInputTests.test_check_only_or_undeclared_target_rejected) ... ok
+test_claude_coordinate_request_has_resize_guard_and_no_expected_values (test_day5.FaultInputTests.test_claude_coordinate_request_has_resize_guard_and_no_expected_values) ... ok
+test_interception_exact_hosts_methods_and_tile_subdomains (test_day5.FaultInputTests.test_interception_exact_hosts_methods_and_tile_subdomains) ... ok
+test_nonclick_actions_never_invoke_vision_fallback (test_day5.FaultInputTests.test_nonclick_actions_never_invoke_vision_fallback) ... ok
+test_screenshot_failure_has_capture_code_and_safe_error_class (test_day5.FaultInputTests.test_screenshot_failure_has_capture_code_and_safe_error_class) ... ok
+test_suite_preflights_faults_and_only_injects_matching_cases (test_day5.FaultInputTests.test_suite_preflights_faults_and_only_injects_matching_cases) ... ok
+test_unexpected_vision_click_error_has_safe_error_class (test_day5.FaultInputTests.test_unexpected_vision_click_error_has_safe_error_class) ... ok
+test_unknown_fault_exit_two_before_browser (test_day5.FaultInputTests.test_unknown_fault_exit_two_before_browser) ... ok
+test_borderline_pass_is_display_only_and_readable_numbers_remain (test_day6.Day6Tests.test_borderline_pass_is_display_only_and_readable_numbers_remain) ... ok
+test_clef_route_configuration_uses_separate_claude_for_clicks (test_day6.Day6Tests.test_clef_route_configuration_uses_separate_claude_for_clicks) ... ok
+test_collapsed_step_keeps_borderline_badge_and_cleanup_empty_is_not_run (test_day6.Day6Tests.test_collapsed_step_keeps_borderline_badge_and_cleanup_empty_is_not_run) ... ok
+test_missing_provider_entry_rejects_before_browser (test_day6.Day6Tests.test_missing_provider_entry_rejects_before_browser) ... ok
+test_missing_screenshot_or_outside_asset_does_not_break_or_link_report (test_day6.Day6Tests.test_missing_screenshot_or_outside_asset_does_not_break_or_link_report) ... ok
+test_per_provider_thresholds_validate_without_hidden_default (test_day6.Day6Tests.test_per_provider_thresholds_validate_without_hidden_default) ... ok
+test_readability_summary_page_type_and_human_formatting (test_day6.Day6Tests.test_readability_summary_page_type_and_human_formatting) ... ok
+test_repeat_analysis_reports_status_and_step_differences_and_probability_spread (test_day6.Day6Tests.test_repeat_analysis_reports_status_and_step_differences_and_probability_spread) ... ok
+test_repeat_never_translates_and_writes_html_json (test_day6.Day6Tests.test_repeat_never_translates_and_writes_html_json) ... Executing <Task finished name='Task-467' coro=<Day6Tests.test_repeat_never_translates_and_writes_html_json() done, defined at /Users/xuenilaw/Documents/myProject/WBS/tests/test_day6.py:255> result=None created at /opt/homebrew/Cellar/python@3.14/3.14.8/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/runners.py:110> took 0.206 seconds
+ok
+test_report_escapes_all_untrusted_text_and_embeds_offline_thumbnails (test_day6.Day6Tests.test_report_escapes_all_untrusted_text_and_embeds_offline_thumbnails) ... ok
+test_saved_clef_replay_point85_zero_false_and_missed_pass_both_sets (test_day6.Day6Tests.test_saved_clef_replay_point85_zero_false_and_missed_pass_both_sets) ... ok
+test_steps_and_cleanup_are_collapsed_with_safe_short_summaries (test_day6.Day6Tests.test_steps_and_cleanup_are_collapsed_with_safe_short_summaries) ... ok
+test_ambiguous_locator_reports_count (test_executor.BrowserExecutorTests.test_ambiguous_locator_reports_count) ... ok
+test_delayed_form_initialization_waits_before_filling (test_executor.BrowserExecutorTests.test_delayed_form_initialization_waits_before_filling) ... ok
+test_duration_failure_and_cleanup (test_executor.BrowserExecutorTests.test_duration_failure_and_cleanup) ... ok
+test_exact_three_hours_fails (test_executor.BrowserExecutorTests.test_exact_three_hours_fails) ... ok
+test_form_not_ready_reports_lazy_fetch_http_status (test_executor.BrowserExecutorTests.test_form_not_ready_reports_lazy_fetch_http_status) ... ok
+test_happy_path_writes_results_screenshots_and_trace (test_executor.BrowserExecutorTests.test_happy_path_writes_results_screenshots_and_trace) ... ok
+test_missing_target_blocks_and_leaves_later_steps_not_run (test_executor.BrowserExecutorTests.test_missing_target_blocks_and_leaves_later_steps_not_run) ... ok
+test_radio_value_mismatch_is_blocked_before_click (test_executor.BrowserExecutorTests.test_radio_value_mismatch_is_blocked_before_click) ... ok
+test_submission_no_effect_is_blocked_without_retry (test_executor.BrowserExecutorTests.test_submission_no_effect_is_blocked_without_retry) ... ok
+test_unparseable_duration_is_blocked (test_executor.BrowserExecutorTests.test_unparseable_duration_is_blocked) ... ok
+test_changed_workbook_requirements_are_stale (test_executor.InputAndDurationTests.test_changed_workbook_requirements_are_stale) ... ok
+test_duration_formats_and_exact_boundary (test_executor.InputAndDurationTests.test_duration_formats_and_exact_boundary) ... ok
+test_locator_config_rejects_code_and_alias_collision (test_executor.InputAndDurationTests.test_locator_config_rejects_code_and_alias_collision) ... ok
+test_malformed_plan_never_launches_browser (test_executor.InputAndDurationTests.test_malformed_plan_never_launches_browser) ... ok
+test_modified_plan_rejected_and_changed_contract_is_stale (test_executor.InputAndDurationTests.test_modified_plan_rejected_and_changed_contract_is_stale) ... ok
+test_old_amendment_source_requires_regeneration (test_executor.InputAndDurationTests.test_old_amendment_source_requires_regeneration) ... ok
+test_rejected_folder_never_launches_browser (test_executor.InputAndDurationTests.test_rejected_folder_never_launches_browser) ... ok
+test_action_heal_cache_reuse_and_metadata (test_healing.HealingTests.test_action_heal_cache_reuse_and_metadata) ... ok
+test_ambiguous_proposal_blocks_once_and_remaining_steps_not_run (test_healing.HealingTests.test_ambiguous_proposal_blocks_once_and_remaining_steps_not_run) ... ok
+test_css_and_extra_fields_rejected_and_zero_match_blocked (test_healing.HealingTests.test_css_and_extra_fields_rejected_and_zero_match_blocked) ... ok
+test_map_capture_ignores_cache_and_never_heals (test_healing.HealingTests.test_map_capture_ignores_cache_and_never_heals) ... ok
+test_missing_visible_check_ignores_cache_and_never_heals (test_healing.HealingTests.test_missing_visible_check_ignores_cache_and_never_heals) ... ok
+test_prior_action_heal_cannot_change_later_check_or_verification_read (test_healing.HealingTests.test_prior_action_heal_cannot_change_later_check_or_verification_read) ... ok
+test_runner_action_heals_then_next_run_uses_cache (test_healing.HealingTests.test_runner_action_heals_then_next_run_uses_cache) ... ok
+test_snapshot_truncated_and_provider_exception_sanitized (test_healing.HealingTests.test_snapshot_truncated_and_provider_exception_sanitized) ... ok
+test_stale_cache_and_broken_human_locator_heal_again (test_healing.HealingTests.test_stale_cache_and_broken_human_locator_heal_again) ... ok
+test_submit_no_effect_ignores_cache_and_never_heals (test_healing.HealingTests.test_submit_no_effect_ignores_cache_and_never_heals) ... ok
+test_undeclared_and_ambiguous_human_targets_never_call_planner (test_healing.HealingTests.test_undeclared_and_ambiguous_human_targets_never_call_planner) ... ok
+test_check_404_reports_each_read_phase_and_stops (test_jira.JiraCheckTests.test_check_404_reports_each_read_phase_and_stops) ... ok
+test_check_cli_prints_safe_statuses_and_failure_has_nonzero_exit (test_jira.JiraCheckTests.test_check_cli_prints_safe_statuses_and_failure_has_nonzero_exit) ... ok
+test_check_uses_only_get_and_returns_no_email_or_account_id (test_jira.JiraCheckTests.test_check_uses_only_get_and_returns_no_email_or_account_id) ... ok
+test_email_shaped_display_name_is_redacted (test_jira.JiraCheckTests.test_email_shaped_display_name_is_redacted) ... ok
+test_404_during_attach_is_diagnosable (test_jira.JiraTests.test_404_during_attach_is_diagnosable) ... ok
+test_404_during_comment_is_diagnosable (test_jira.JiraTests.test_404_during_comment_is_diagnosable) ... ok
+test_404_during_create_is_diagnosable (test_jira.JiraTests.test_404_during_create_is_diagnosable) ... ok
+test_404_during_issue_types_is_diagnosable (test_jira.JiraTests.test_404_during_issue_types_is_diagnosable) ... ok
+test_404_during_search_is_diagnosable (test_jira.JiraTests.test_404_during_search_is_diagnosable) ... ok
+test_bug_metadata_present_or_absent_and_attachment_header (test_jira.JiraTests.test_bug_metadata_present_or_absent_and_attachment_header) ... ok
+test_dry_run_sends_nothing_and_writes_plain_adf_payload (test_jira.JiraTests.test_dry_run_sends_nothing_and_writes_plain_adf_payload) ... ok
+test_duplicate_uses_new_search_and_comment_no_create (test_jira.JiraTests.test_duplicate_uses_new_search_and_comment_no_create) ... ok
+test_fingerprint_multi_step_sorting_and_blocked_fallback (test_jira.JiraTests.test_fingerprint_multi_step_sorting_and_blocked_fallback) ... ok
+test_fingerprint_uses_failed_source_steps_only (test_jira.JiraTests.test_fingerprint_uses_failed_source_steps_only) ... ok
+test_legacy_search_paginates_and_comments_on_oldest_match (test_jira.JiraTests.test_legacy_search_paginates_and_comments_on_oldest_match) ... ok
+test_search_matches_exact_v2_and_rejects_incomplete_responses (test_jira.JiraTests.test_search_matches_exact_v2_and_rejects_incomplete_responses) ... ok
+test_unapproved_unknown_changed_analysis_and_safe_http_failures (test_jira.JiraTests.test_unapproved_unknown_changed_analysis_and_safe_http_failures) ... ok
+test_package_links_work_after_extracting_evidence_and_old_paths_rebase (test_junit.JUnitTests.test_package_links_work_after_extracting_evidence_and_old_paths_rebase) ... ok
+test_prune_defaults_to_preview_and_keeps_protected_paths (test_junit.JUnitTests.test_prune_defaults_to_preview_and_keeps_protected_paths) ... ok
+test_status_mapping_counts_escaping_and_diagnostic_lines (test_junit.JUnitTests.test_status_mapping_counts_escaping_and_diagnostic_lines) ... ok
+test_translation_rejected_missing_evidence_and_repeat_aggregate (test_junit.JUnitTests.test_translation_rejected_missing_evidence_and_repeat_aggregate) ... ok
+test_fake_translation_browser_layout_reuse_and_revalidation (test_junit.LayoutTests.test_fake_translation_browser_layout_reuse_and_revalidation) ... ok
+test_contract_only_change_new_validated_folder_old_untouched (test_revalidate.RevalidateTests.test_contract_only_change_new_validated_folder_old_untouched) ... ok
+test_modified_plan_still_rejected_against_current_contract (test_revalidate.RevalidateTests.test_modified_plan_still_rejected_against_current_contract) ... ok
+test_workbook_change_rejected_without_approved_plan (test_revalidate.RevalidateTests.test_workbook_change_rejected_without_approved_plan) ... ok
+test_layer_selected_cleanup_and_options_missing_extra (test_suite.LayerBrowserTests.test_layer_selected_cleanup_and_options_missing_extra) ... ok
+test_case_ids_order_and_reuse_hit_miss (test_suite.SuiteTests.test_case_ids_order_and_reuse_hit_miss) ... ok
+test_city_alias_is_exact_and_used_by_vision (test_suite.SuiteTests.test_city_alias_is_exact_and_used_by_vision) ... ok
+test_designed_failure_remains_failed_and_reuse_skips_translation (test_suite.SuiteTests.test_designed_failure_remains_failed_and_reuse_skips_translation) ... ok
+test_dom_route_uses_city_alias (test_suite.SuiteTests.test_dom_route_uses_city_alias) ... ok
+test_layer_contract_positive_and_negative (test_suite.SuiteTests.test_layer_contract_positive_and_negative) ... ok
+test_plan_route_check_accepts_only_declared_city_alias (test_suite.SuiteTests.test_plan_route_check_accepts_only_declared_city_alias) ... ok
+test_three_cases_rejected_middle_continues_and_designed_status_stays_real (test_suite.SuiteTests.test_three_cases_rejected_middle_continues_and_designed_status_stays_real) ... ok
+test_arbitrary_code_action_is_rejected (test_translation.TranslationValidationTests.test_arbitrary_code_action_is_rejected) ... ok
+test_comparator_cannot_replace_expected_driving_mode (test_translation.TranslationValidationTests.test_comparator_cannot_replace_expected_driving_mode) ... ok
+test_duration_limit_cannot_be_relaxed_or_tightened (test_translation.TranslationValidationTests.test_duration_limit_cannot_be_relaxed_or_tightened) ... ok
+test_inclusive_duration_is_rejected (test_translation.TranslationValidationTests.test_inclusive_duration_is_rejected) ... ok
+test_missing_cleanup_field_is_rejected (test_translation.TranslationValidationTests.test_missing_cleanup_field_is_rejected) ... ok
+test_missing_field_check_is_rejected (test_translation.TranslationValidationTests.test_missing_field_check_is_rejected) ... ok
+test_missing_step_is_rejected (test_translation.TranslationValidationTests.test_missing_step_is_rejected) ... ok
+test_model_cannot_claim_test_pass (test_translation.TranslationValidationTests.test_model_cannot_claim_test_pass) ... ok
+test_rewritten_source_is_rejected (test_translation.TranslationValidationTests.test_rewritten_source_is_rejected) ... ok
+test_submit_before_fill_is_rejected (test_translation.TranslationValidationTests.test_submit_before_fill_is_rejected) ... ok
+test_swapped_origin_destination_is_rejected (test_translation.TranslationValidationTests.test_swapped_origin_destination_is_rejected) ... ok
+test_unnumbered_and_duplicate_steps_rejected (test_translation.TranslationValidationTests.test_unnumbered_and_duplicate_steps_rejected) ... ok
+test_unresolved_issue_blocks_plan (test_translation.TranslationValidationTests.test_unresolved_issue_blocks_plan) ... ok
+test_valid_translation_and_nonblocking_notes (test_translation.TranslationValidationTests.test_valid_translation_and_nonblocking_notes) ... ok
+test_workbook_requirements_match_reviewed_reference (test_translation.TranslationValidationTests.test_workbook_requirements_match_reviewed_reference) ... ok
+test_wrong_city_is_rejected (test_translation.TranslationValidationTests.test_wrong_city_is_rejected) ... ok
+test_default_provider_runs_only_declared_checks_after_dom_pass (test_vision.VisionRunnerTests.test_default_provider_runs_only_declared_checks_after_dom_pass) ... ok
+test_precedence_crop_reasons_and_cleanup (test_vision.VisionRunnerTests.test_precedence_crop_reasons_and_cleanup) ... ok
+test_skip_vision_cli_continues_duration_but_never_passes (test_vision.VisionRunnerTests.test_skip_vision_cli_continues_duration_but_never_passes) ... ok
+test_claude_native_image_and_output_budget (test_vision.VisionTests.test_claude_native_image_and_output_budget) ... ok
+test_config_error_never_uses_glm_key (test_vision.VisionTests.test_config_error_never_uses_glm_key) ... ok
+test_contract_change_stales_saved_plan (test_vision.VisionTests.test_contract_change_stales_saved_plan) ... ok
+test_contract_rejects_invalid_or_missing_confidence_and_unknown_kind (test_vision.VisionTests.test_contract_rejects_invalid_or_missing_confidence_and_unknown_kind) ... ok
+test_each_transport_error_code_is_safe_and_saved (test_vision.VisionTests.test_each_transport_error_code_is_safe_and_saved) ... ok
+test_invalid_json_schema_and_skip_have_saved_response (test_vision.VisionTests.test_invalid_json_schema_and_skip_have_saved_response) ... ok
+test_judgment_programming_error_is_internal_not_network (test_vision.VisionTests.test_judgment_programming_error_is_internal_not_network) ... ok
+test_qualified_requirement_retains_country (test_vision.VisionTests.test_qualified_requirement_retains_country) ... ok
+test_reason_rows_and_strict_rules (test_vision.VisionTests.test_reason_rows_and_strict_rules) ... ok
+test_sdk_sends_image_and_records_usage (test_vision.VisionTests.test_sdk_sends_image_and_records_usage) ... ok
+test_thinking_prefix_parsed_but_never_logged (test_vision.VisionTests.test_thinking_prefix_parsed_but_never_logged) ... ok
+test_declared_targets_do_not_require_existing_locators (test_vocabulary.VocabularyTests.test_declared_targets_do_not_require_existing_locators) ... ok
+test_loader_rejects_changed_vocabulary_and_unknown_saved_target (test_vocabulary.VocabularyTests.test_loader_rejects_changed_vocabulary_and_unknown_saved_target) ... ok
+test_translator_receives_suite_catalog_and_hints (test_vocabulary.VocabularyTests.test_translator_receives_suite_catalog_and_hints) ... ok
+
+----------------------------------------------------------------------
+Ran 185 tests in 68.972s
+
+OK
+```
+
+## Review round 8: re-review (Claude, 2026-10-17)
+Verdict: **APPROVED. Commit, push, Build.** Verified: tests OK locally; the candidate policy is in Python (`audit_validation.py`: a FAILED check row that isn't an infrastructure code is required) and is
+rechecked by the sender; the v2 fingerprint = case + evidence-derived steps + Excel expected text (`jira.py:158`), with no AI fields; legacy labels (`wbs-<case>-step…`) are matched by an exact regex and
+the oldest open match receives the comment, with `duplicate_keys` logged.
+**NIT (follow-up, non-blocking):** when a comment goes to an issue found only through a **legacy** label, also **add the v2 label** to that issue (`update.labels.add`), so later builds match exactly
+and the broad legacy fallback can eventually be removed. Record the label addition in `jira_results.json`.
+Acceptance: the next approved build → `action: commented` on **WBSFP-1** (the oldest). If WBSFP-2 is still open, `duplicate_keys` lists it; close it in Jira as a duplicate.

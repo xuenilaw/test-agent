@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, patch
 from test_day6 import fixture_suite
 from test_vision import http_reply
 from test_agent.audit_agent import dossiers_from_suite, run_audit_agent, claude_analyze, audit_model, approval_preview
-from test_agent.audit_validation import validate_finding
+from test_agent.audit_validation import validate_finding, ticket_type_for
 from test_agent.audit_vision import ScreenshotQuestions
 from test_agent.artifacts import package_reports
 from test_agent.schemas.audit_analysis import Finding
@@ -75,6 +75,30 @@ async def fake_analyst(dossier,questions):
 
 
 class AuditAgentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_python_candidate_policy_ignores_ai_ticket_advice(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);audit_fixture(root)
+            async def analyst(d,q):
+                raw=json.loads(await fake_analyst(d,q))
+                raw['findings'][0].update(recommend_ticket=False,ticket_type=None,step=None,confidence='high')
+                return json.dumps(raw)
+            a=await run_audit_agent(root,analyst=analyst,vision=FakeAuditVision())
+            f=next(f for f in a['findings'] if f['case_id']=='CASE-2')
+            self.assertFalse(f['recommend_ticket'])
+            self.assertEqual(f['step'],1)
+            self.assertEqual(len(approval_preview(root)['candidates']),1)
+            self.assertIn('AI ticket advice (advisory only): False',(root/'audit_analysis.md').read_text())
+            d=a['cases']['CASE-2']
+            for cause,kind in [('software_bug','bug'),('test_case_problem','test_case_fix'),
+                    ('environment_problem',None),('test_tool_problem',None),('needs_human_review',None),
+                    ('possible_false_pass',None),('confirmed_pass',None)]:
+                self.assertEqual(ticket_type_for({**f,'likely_cause':cause},d),kind)
+            blocked=a['cases']['CASE-3']
+            self.assertIsNone(ticket_type_for(finding(blocked,cause='test_case_problem',ticket=True),blocked))
+            # A FAILED case row alone cannot create a candidate.
+            case_row=next(r['row_id'] for r in d['rows'] if r['row_type']=='case')
+            self.assertIsNone(ticket_type_for({**f,'evidence_rows':[case_row]},d))
+
     async def test_dossiers_valid_analysis_all_cases_and_packaged_link(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);suite=root/'suite-fixture';audit_fixture(suite)
@@ -160,7 +184,7 @@ class AuditAgentTests(unittest.IsolatedAsyncioTestCase):
                     ({'evidence_screenshots':['S-CASE-1-1']},'UNKNOWN_OR_FOREIGN_EVIDENCE'),
                     ({'evidence_questions':['Q-CASE-3-99']},'UNANSWERED_OR_INVENTED_QUESTION'),
                     ({'likely_cause':'software_bug','recommend_ticket':True,'ticket_type':'bug'},'SOFTWARE_BUG_WITHOUT_FAILED_CHECK'),
-                    ({'likely_cause':'environment_problem','recommend_ticket':True,'ticket_type':'bug'},'UNSAFE_TICKET_CATEGORY')]:
+                    ({'likely_cause':'environment_problem','recommend_ticket':True,'ticket_type':'bug'},None)]:
                 self.assertEqual(validate_finding(Finding.model_validate({**base,**changes}),d,[]),expected)
             # A blocked-only case may discuss a possible bug, without turning it into a bug recommendation.
             self.assertIsNone(validate_finding(Finding.model_validate({**base,'explanation':'Possibly a software bug; needs investigation.'}),d,[]))
@@ -189,7 +213,8 @@ class AuditAgentTests(unittest.IsolatedAsyncioTestCase):
             f.update(evidence_questions=[answer['question_id']],evidence_screenshots=[answer['screenshot_id']])
             self.assertIsNone(validate_finding(Finding.model_validate(f),d,tool.questions))
             f.update(recommend_ticket=True,ticket_type='bug')
-            self.assertEqual(validate_finding(Finding.model_validate(f),d,tool.questions),'FALSE_PASS_REQUIRES_HUMAN_REVIEW')
+            self.assertIsNone(validate_finding(Finding.model_validate(f),d,tool.questions))
+            self.assertIsNone(ticket_type_for(f,d))
             route_dossier={**d,'contract':dict(route_step=1,origin='Hamburg',destination='Berlin',destination_aliases=['Berlin, Germany'])}
             answer.update(question='Which city is the destination marker?',options=['Berlin','Munich','unclear'],choice='Munich')
             self.assertTrue(ScreenshotQuestions.contradiction(route_dossier,d['screenshots'][0],answer))
@@ -252,8 +277,8 @@ class AuditAgentTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result['text_model'],'fake-haiku')
             self.assertEqual(result['vision_model'],'fake-haiku')
             self.assertEqual(result['provider'],'anthropic')
-            self.assertIn('Ticket: not recommended',(root/'audit_analysis.md').read_text())
-            self.assertIn('Ticket: recommended (Test case fix)',(root/'audit_analysis.md').read_text())
+            self.assertIn('Ticket (Python rule): no candidate',(root/'audit_analysis.md').read_text())
+            self.assertIn('Ticket (Python rule): test_case_fix',(root/'audit_analysis.md').read_text())
 
     async def test_native_tool_errors_limits_and_incomplete_output(self):
         with tempfile.TemporaryDirectory() as temp:

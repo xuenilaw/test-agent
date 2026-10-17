@@ -62,16 +62,8 @@ def validate_finding(finding: Finding, dossier, questions):
     if f['likely_cause'] == 'possible_false_pass':
         if not any(substantive_failure(r) for r in selected) and not any(q.get('contradicts_expected') for q in cited):
             return 'FALSE_PASS_WITHOUT_CONTRADICTION'
-        if f['recommend_ticket'] or f['ticket_type'] is not None:
-            return 'FALSE_PASS_REQUIRES_HUMAN_REVIEW'
     if f['likely_cause'] == 'software_bug' and not any(substantive_failure(r) for r in selected):
         return 'SOFTWARE_BUG_WITHOUT_FAILED_CHECK'
-    if f['recommend_ticket']:
-        required = {'bug':'software_bug', 'test_case_fix':'test_case_problem'}.get(f['ticket_type'])
-        if required != f['likely_cause']:
-            return 'UNSAFE_TICKET_CATEGORY'
-    elif f['ticket_type'] is not None:
-        return 'TICKET_TYPE_WITHOUT_RECOMMENDATION'
     return None
 
 
@@ -114,7 +106,30 @@ def validate_submission(payload, dossier, questions, known_ids=(), *, normalizat
                               field_errors=[dict(field=f'findings.{index}',type=error)],
                               **({'unobserved_screenshot_ids':claims} if error=='UNOBSERVED_SCREENSHOT_CLAIM' else {})))
         else:
+            finding = finding.model_copy(update={'step':display_step(finding.model_dump(),dossier)})
             accepted.append(finding.model_dump()); ids.add(finding.finding_id)
             if stripped and normalizations is not None:
                 normalizations.append(dict(case_id=case_id,finding_id=finding.finding_id,stripped_screenshot_ids=stripped))
     return envelope.summary, accepted, drops
+
+
+def ticket_type_for(finding, dossier):
+    """Python policy; model recommendation/type/confidence are advisory only."""
+    failed = any(r['row_id'] in finding['evidence_rows'] and r['status']=='FAILED'
+                 and r['row_type']=='check' for r in dossier['rows'])
+    return {'software_bug':'bug', 'test_case_problem':'test_case_fix'}.get(finding['likely_cause']) if failed else None
+
+
+def evidence_steps(finding, dossier):
+    """Stable source step numbers from cited FAILED rows, falling back to BLOCKED."""
+    rows = [r for r in dossier['rows'] if r['row_id'] in finding['evidence_rows']]
+    selected = [r for r in rows if r['status']=='FAILED'] or [r for r in rows if r['status']=='BLOCKED']
+    return sorted({int(r['step']) for r in selected if r['row_type']!='case' and str(r.get('step','')).isdigit()})
+
+
+def display_step(finding, dossier):
+    if finding['step'] is not None:
+        return finding['step']
+    steps = {int(r['step']) for r in dossier['rows'] if r['row_id'] in finding['evidence_rows']
+             and r['row_type']!='case' and str(r.get('step','')).isdigit()}
+    return next(iter(steps)) if len(steps)==1 else None

@@ -15,7 +15,7 @@ from test_audit_agent import audit_fixture, fake_analyst, FakeAuditVision
 from test_vision import FakeHTTP
 from test_agent.audit_agent import run_audit_agent
 from test_agent.artifacts import package_reports
-from test_agent.jira import JiraClient, create_tickets, payload_for, check_connection, error_line, PATH_TEMPLATES
+from test_agent.jira import JiraClient, create_tickets, payload_for, check_connection, error_line, PATH_TEMPLATES, matching_issues, JiraError
 from test_agent.cli import main
 
 
@@ -39,7 +39,7 @@ class FakeJiraHTTP:
         elif 'createmeta' in path:
             data=dict(issueTypes=[dict(id='2',name='Task',subtask=False)]+([dict(id='1',name='Bug',subtask=False)] if self.bug else []),isLast=True)
         elif path.endswith('/search/jql'):
-            data=dict(issues=[dict(key='WBSFP-42')] if self.duplicate else [])
+            data=dict(issues=[dict(key='WBSFP-42',fields=dict(labels=['wbs-case-2-step1-012345abcdef'],created='2026-10-16T10:00:00Z'))] if self.duplicate else [],isLast=True)
         elif path.endswith('/issue'):
             data=dict(key='WBSFP-43')
         else:
@@ -79,6 +79,80 @@ class JiraTests(unittest.IsolatedAsyncioTestCase):
             _,a=payload_for(f,d,'WBSFP','Task')
             _,b=payload_for({**f,'title':'A different model wording','explanation':'Different explanation'},d,'WBSFP','Task')
             self.assertEqual(a,b)
+
+    async def test_fingerprint_uses_failed_source_steps_only(self):
+        with tempfile.TemporaryDirectory() as temp:
+            reports,f=await self.prepare(Path(temp))
+            d=json.loads((reports/'audit_analysis.json').read_text())['cases']['CASE-2']
+            def label(item,dossier=d): return payload_for(item,dossier,'WBSFP','Task')[1]
+            original=label(f)
+            self.assertEqual(original,label({**f,'step':None,'ticket_type':'bug','title':'Changed','explanation':'Changed'}))
+            self.assertEqual(original,label({**f,'step':5,'recommend_ticket':False}))
+            changed=copy.deepcopy(d)
+            for r in changed['rows']:
+                if r['row_id'] in f['evidence_rows'] and r['status']=='FAILED':r['step']='5'
+            changed['test_case']['expected'].append(dict(number=5,text='Another expectation'))
+            self.assertNotEqual(original,label(f,changed))
+            changed=copy.deepcopy(d);changed['test_case']['expected'][0]['text']='Changed expectation'
+            self.assertNotEqual(original,label(f,changed))
+            # Source actions and row IDs/order are not part of identity.
+            changed=copy.deepcopy(d);changed['test_case']['actions'][0]['text']='Reworded action'
+            self.assertEqual(original,label({**f,'evidence_rows':list(reversed(f['evidence_rows']))},changed))
+
+    async def test_legacy_search_paginates_and_comments_on_oldest_match(self):
+        with tempfile.TemporaryDirectory() as temp:
+            reports,f=await self.prepare(Path(temp))
+            path=reports/'audit_analysis.json';a=json.loads(path.read_text())
+            next(i for i in a['findings'] if i['finding_id']==f['finding_id']).update(recommend_ticket=False,ticket_type=None,step=None)
+            path.write_text(json.dumps(a))
+            http=FakeJiraHTTP();searches=[]
+            def opener(request,timeout):
+                if not request.full_url.endswith('/search/jql'):return http(request,timeout)
+                searches.append(json.loads(request.data))
+                if len(searches)==1:
+                    data=dict(issues=[dict(key='WBSFP-2',fields=dict(labels=['wbs-case-2-stepcase-a5fa2c19fefc'],created='2026-10-17T10:00:00Z'))],nextPageToken='page2')
+                else:
+                    data=dict(issues=[dict(key='WBSFP-1',fields=dict(labels=['wbs-case-2-step5-596e53579875'],created='2026-10-16T10:00:00Z')),
+                        dict(key='WBSFP-3',fields=dict(labels=['CASE-2','wbs-case-2-v2-unrelated'],created='2026-10-15T10:00:00Z'))],isLast=True)
+                return FakeHTTP(json.dumps(data).encode())
+            client=JiraClient('https://lawxueni.atlassian.net','WBSFP','fake','fake',opener=opener)
+            result=create_tickets(reports,[f['finding_id']],send=True,client=client)
+            self.assertFalse(result['errors'],result)
+            issue=result['issues'][0]
+            self.assertEqual((issue['action'],issue['key'],issue['duplicate_keys']),('commented','WBSFP-1',['WBSFP-2']))
+            self.assertIn('oldest',issue['warning'])
+            self.assertEqual(searches[1]['nextPageToken'],'page2')
+            self.assertIn('labels = "CASE-2"',searches[0]['jql'])
+            self.assertFalse(any(r.full_url.endswith('/issue') for r in http.calls))
+
+    def test_fingerprint_multi_step_sorting_and_blocked_fallback(self):
+        f=dict(case_id='CASE-2',step=None,title='Issue',likely_cause='test_case_problem',confidence='high',
+            explanation='Why',alternative_causes=[],screenshot_observations='',suggested_next_step='Review',
+            evidence_rows=['b','a'])
+        def row(row_id,step,status):return dict(row_id=row_id,step=str(step),status=status,row_type='check',actual='',reason_code='',reason='')
+        d=dict(test_case=dict(actions=[],expected=[dict(number=5,text='Five'),dict(number=2,text='Two')]),
+               rows=[row('a',5,'FAILED'),row('b',2,'FAILED')],designed_outcome='FAILED')
+        label=payload_for(f,d,'WBSFP','Task')[1]
+        reverse=copy.deepcopy(d);reverse['rows'].reverse();reverse['test_case']['expected'].reverse()
+        self.assertEqual(label,payload_for({**f,'evidence_rows':['a','b']},reverse,'WBSFP','Task')[1])
+        for r in d['rows']:r['status']='BLOCKED'
+        self.assertEqual(label,payload_for(f,d,'WBSFP','Task')[1])
+        d['rows'][0]['status']='PASSED'
+        self.assertNotEqual(label,payload_for(f,d,'WBSFP','Task')[1])
+
+    def test_search_matches_exact_v2_and_rejects_incomplete_responses(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        label='wbs-case-2-v2-012345abcdef'
+        issue=dict(key='WBSFP-7',fields=dict(labels=[label],created='2026-10-17T10:00:00Z'))
+        client=SimpleNamespace(request=Mock(return_value=dict(issues=[issue],isLast=True)))
+        self.assertEqual(matching_issues(client,{},'CASE-2',label,'WBSFP')[0]['key'],'WBSFP-7')
+        for data in [dict(issues=[dict(key='WBSFP-7')],isLast=True),dict(issues=[],isLast=False),
+                     dict(issues=[{**issue,'fields':dict(labels=[label],created='invalid')}],isLast=True)]:
+            client.request=Mock(return_value=data)
+            with self.assertRaises(JiraError):matching_issues(client,{},'CASE-2',label,'WBSFP')
+        client.request=Mock(return_value=dict(issues=[],nextPageToken='repeated'))
+        with self.assertRaises(JiraError):matching_issues(client,{},'CASE-2',label,'WBSFP')
 
     async def test_bug_metadata_present_or_absent_and_attachment_header(self):
         for bug,expected in [(True,'Bug'),(False,'Task')]:

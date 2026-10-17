@@ -321,6 +321,17 @@ Audit analysis 只绑定 `wbs-anthropic-api-key`，使用 `ANTHROPIC_API_KEY`，
 `AUDIT_MODEL=claude-haiku-5-5` 同时控制 analyst 与截图观察，只有一个 provider/model。旧 `AUDIT_VISION_MODEL` 暂作兼容别名，新设置优先。
 Excel 翻译与 DOM healing 仍使用原来的 GLM；生产 route checker 仍是 Clef，本次只替换 audit。
 
+**机制一眼看懂：** 已完成的测试 → Python 整理证据 → Claude 分析 → Python 校验并决定候选 → 人工批准 → Python 查重 / 评论或创建 Jira。
+
+| 谁 | 负责什么 |
+| --- | --- |
+| Python | 收集 Excel、results、截图目录；调用模型；校验证据 ID 和 schema；按规则选候选、算 fingerprint；审批后调用 Jira |
+| Claude Haiku（LLM） | 解释失败的可能原因、替代原因和下一步；需要画面时通过隔离的 screenshot observer 回答中性问题 |
+| 人 | 判断分析是否合理，勾选要报告的 finding；不批准就不发送 Jira 写请求 |
+
+例如执行器已经记录「实际 456 分钟，要求小于 180」为 FAILED；Claude 可以推测「测试期望不合理」。Python 确认该 finding 引用了真实 FAILED check，并据 test_case_problem 生成 test_case_fix 候选，即使 Claude advisory 写了 false。
+这不会重跑测试、改 Excel 或把 FAILED 改成 PASSED。原因分类仍是 LLM 的判断，可能随 build 变化；本轮稳定的是相同 cause + 相同引用证据下的候选规则，以及不依赖 AI step/措辞的去重身份。
+
 **为什么：** `audit.csv` 是记录；audit agent 才负责推理。Python 为每个 case（包括 PASSED）准备 dossier：Excel 原文、contract、plan、该 case 的 rows、结果摘要与截图目录。
 Claude Haiku 读取 dossier 并推理；需要图片时，它调用 `ask_screenshot(id, question, options)`，Python 用同一个 Haiku model 发起独立的截图观察请求。
 观察请求只收到中性问题、3–8 个选项（必须有 unclear）、输出 schema 和一张图，不收到 Excel 的 expected text、实际 test verdict 或图片文件名。
@@ -407,6 +418,8 @@ uv run python -m test_agent jira check
 成功例如 `Jira auth: OK — <display name>`、`Jira project: OK`、`Jira issue_types: OK — Bug, Task`。
 这些 GET 成功说明认证、项目可见性与 metadata 访问成功，不保证已经有 Create issues / Add comments / Create attachments 的写权限。
 
+`CHECK_JIRA_CONNECTION` 只用于排障（修改 credentials 后或出现 Jira 错误时），不需要每次 build 都勾选。
+
 **用 Jenkins 中的同一个 credential 检查：** 新 Jenkinsfile 加载后，用 **Build with Parameters**，勾选 `CHECK_JIRA_CONNECTION`（默认 false），运行 **Jira connection check**。
 它在 Setup 后使用 `wbs-jira`，只读检查失败时标记该阶段/build UNSTABLE，并继续原测试流程；没有执行 Jira 写操作。
 参数第一次随 Jenkinsfile 加载后才会出现在 job 页面。默认不勾选时不会增加 Jira 请求。
@@ -433,7 +446,9 @@ JIRA_AUTH（401/403）查账号/token、到期和权限；JIRA_CONFIG 查配置�
 
 ## 13. Review tickets：人决定，默认不选
 
-**做什么：** Audit 有至少一个安全的 `recommend_ticket: true` finding，才进入 Review tickets。
+**做什么：** Python 按已验证的证据决定候选，至少一个候选才进入 Review tickets：
+`software_bug` + 至少一条引用的 FAILED check → `bug`；`test_case_problem` + 至少一条引用的 FAILED check → `test_case_fix`；其他情况不产生候选。
+Claude 的 `recommend_ticket` / `ticket_type` 仅是 advisory，在分析中显示；false 不会压掉有失败证据的候选，true 也不能让 BLOCKED / 环境问题变成候选。
 顶部显示：**AI audit requires human approval. Tick the test case(s) you want to report, then click 'Create Jira ticket'. Unticked items are not created.**
 下面的 `Total TC: 3; Passed: 2; Failed: 1; Blocked: 0` 来自本次 summary.json 的 case verdict，实际数字随结果变化；不是 audit attention 数。
 逐项勾选要创建的 finding（**默认全部 false**），点击 **Create Jira ticket**。不勾选的项不会创建，也不会给已有 issue 加评论。
@@ -453,6 +468,7 @@ input 只列可批准的 ticket。possible false pass 和其他无 ticket 的 at
 Review tickets 无 agent、无 executor、无 container：人考虑多久，都不占用测试机。输入完成后，Jira 阶段重新分配 agent、checkout 和 `unstash reports/`。
 这会复制 evidence.zip 等文件，是本地学习的简单实现；更大证据集可以将来改为外部 artifact storage。
 
+如果 30 分钟内无人回应审批，不会创建任何 ticket；Jenkins 的等待 input 可能显示 aborted，实际发送显示 not run；Pipeline 捕获中断后仍可运行 Record decision and Jira 来保存 timeout_or_abort，整个 build 保留测试结果。没有候选时，两个阶段按设计显示 skipped。
 审批有 30 分钟 timeout；在 input 上 Abort、超时、全部不选，都**不发送任何 Jira 请求**，保留之前的 SUCCESS/UNSTABLE。
 `jira_decision.json` 记录 status、批准者、选中的 finding IDs、分析文件 SHA-256。发送前再次检查 hash 和 IDs，防止批准后分析被更换。
 partial audit 只要有一个通过规则的 ticket candidate，仍进入 Review tickets；不以 availability / agent_unavailable 决定是否审批。
@@ -471,8 +487,10 @@ partial audit 只要有一个通过规则的 ticket candidate，仍进入 Review
 描述使用 Atlassian Document Format（ADF），模型文字只作为普通文本：Excel source action/expected、actual/reason、category、证据行、designed outcome、build/Test Report URL，另有 **AI analysis (suggestion, verify)**。
 截图从 evidence.zip 中按已验证的相对路径读取，上传 header 为 `X-Atlassian-Token: no-check`，不上传完整 trace。
 
-**为什么：** fingerprint label 来自 case/step、source action/expected、ticket type 的稳定散列，不使用会变化的模型 title 或 build number。
-使用新的 `POST /rest/api/3/search/jql` 查 WBSFP 同 label 且未完成的 issue；已有则添加本次 build 的 comment，不再创建新 issue。第二次运行也需要重新批准。
+**为什么：** v2 fingerprint label 只散列 case ID、Python 从引用的 FAILED rows 提取的 step numbers（排序；没有 FAILED rows 时用 BLOCKED rows）、这些 steps 的 Excel expected 原文。
+不使用 AI 的 step、ticket_type、title、explanation、source action 或 build number。AI step 为 null 且所有引用的非 case rows 只有一个 step 时，Python 填入该 step 供显示。
+使用 `POST /rest/api/3/search/jql` 分页查 WBSFP 未完成的同 v2 label issue，以及带本 case label 的旧 `wbs-<case>-step<number/case>-<hash>` issue。
+旧 label 兼容可能匹配同 case 的另一历史问题；批准前需读已有 ticket。多个 open matches 时评论最早创建的 issue，并在 jira_results.json 记录 duplicate_keys 和 warning；无匹配才新建。第二次运行也需要重新批准。
 无匹配才 create；同一 finding 最多附 4 张相关 step/map 图。每次类型选择、created/commented key、URL、附件数量和错误均写入 jira_results.json。
 
 **Checkpoint：** Build description 有 Jira URL；WBSFP ticket 带 wbs-test-agent、fingerprint、case ID labels，有截图和回到 Jenkins 的链接。

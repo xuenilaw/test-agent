@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 from test_agent.audit import build_audit
-from test_agent.audit_validation import AuditRepairFailed, validate_submission
+from test_agent.audit_validation import AuditRepairFailed, validate_submission, ticket_type_for
 from test_agent.audit_presentation import presentation, credential_warning, approval_dialog
 from test_agent.audit_vision import ScreenshotQuestions
 from test_agent.reporting import Report, read_json, short_text
@@ -36,6 +36,7 @@ test_case_problem; do not change the threshold or relabel the saved result. For 
 confirmed_pass, possible_false_pass, or needs_human_review. A possible_false_pass requires a
 contradicting FAILED check row or a certain screenshot answer marked contradicts_expected=true;
 otherwise explain the uncertainty. Use needs_human_review only for a concrete suspicion requiring a human decision. Never recommend a ticket for possible_false_pass.
+Python decides ticket candidates independently of your advisory recommend_ticket and ticket_type: software_bug + a cited FAILED check becomes bug; test_case_problem + a cited FAILED check becomes test_case_fix; all other combinations have no candidate.
 Only recommend bug with software_bug AND a cited substantive FAILED check (not merely BLOCKED,
 VISION_* or navigation/tool failures). For BLOCKED evidence, put a possible software bug in
 alternative_causes and ask for review. test_case_fix requires test_case_problem. No tickets for
@@ -218,7 +219,8 @@ def markdown(analysis):
                   safe(f['explanation']), '', 'Alternatives: '+safe('; '.join(a['cause']+': '+a['why'] for a in f['alternative_causes']) or 'none'),
                   'Screenshot observation: '+safe(f['screenshot_observations'] or 'Not observed / text only'),
                   'Suggested next step: '+safe(f['suggested_next_step']),
-                  'Ticket: '+('recommended ('+{'bug':'Bug','test_case_fix':'Test case fix'}[f['ticket_type']]+')' if f['recommend_ticket'] else 'not recommended'),
+                  'Ticket (Python rule): '+str(ticket_type_for(f,d) or 'no candidate'),
+                  'AI ticket advice (advisory only): '+str(f['recommend_ticket'])+'; type: '+str(f['ticket_type']),
                   'Designed outcome: '+str(d['designed_outcome']),
                   'Evidence rows: '+', '.join(f['evidence_rows']), 'Screenshots: '+', '.join(f['evidence_screenshots']),
                   'Answered questions: '+', '.join(f['evidence_questions']), '']

@@ -5,13 +5,14 @@ import json
 import os
 import re
 import uuid
+from datetime import datetime
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from zipfile import ZipFile
 
-from test_agent.audit_validation import validate_finding
+from test_agent.audit_validation import validate_finding, ticket_type_for, evidence_steps, display_step
 from test_agent.reporting import read_json, short_text
 from test_agent.schemas.audit_analysis import Finding
 
@@ -145,13 +146,16 @@ def adf(lines):
 
 
 def payload_for(finding, dossier, project, issue_type, build_url='', report_url=''):
-    step = finding['step']
+    step = display_step(finding,dossier)
     actions = [s for s in dossier['test_case'].get('actions',[]) if step is None or s['number']==step]
     expected = [s for s in dossier['test_case'].get('expected',[]) if step is None or s['number']==step]
     source_action = '\n'.join(f"{s['number']}. {s['text']}" for s in actions)
     expected_text = '\n'.join(f"{s['number']}. {s['text']}" for s in expected)
-    identity = json.dumps([finding['case_id'],step,source_action,expected_text,finding['ticket_type']],ensure_ascii=False)
-    fingerprint = 'wbs-'+finding['case_id'].lower()+'-step'+str(step or 'case')+'-'+hashlib.sha256(identity.encode()).hexdigest()[:12]
+    steps = evidence_steps(finding,dossier)
+    identity = json.dumps([finding['case_id'], steps,
+        [[n, [e['text'] for e in dossier['test_case'].get('expected',[]) if e['number']==n]] for n in steps]],
+        ensure_ascii=False, separators=(',',':'))
+    fingerprint = 'wbs-'+finding['case_id'].lower()+'-v2-'+hashlib.sha256(identity.encode()).hexdigest()[:12]
     rows = [r for r in dossier['rows'] if r['row_id'] in finding['evidence_rows']]
     lines = [f"Case: {finding['case_id']} · Step: {step or 'case'}",'Source action: '+source_action,
         'Expected (Excel): '+expected_text,
@@ -177,7 +181,7 @@ def selected_findings(folder, approved):
             continue
         finding = Finding.model_validate(item)
         dossier = analysis['cases'][finding.case_id]
-        if not finding.recommend_ticket or validate_finding(finding,dossier,analysis.get('questions',[])):
+        if not ticket_type_for(finding.model_dump(),dossier) or validate_finding(finding,dossier,analysis.get('questions',[])):
             raise JiraError('JIRA_CONFIG')
         selected.append((finding.model_dump(),dossier))
     if {f['finding_id'] for f,_ in selected} != set(approved) or len(selected) != len(set(approved)):
@@ -208,6 +212,49 @@ def attach(client, folder, key, paths):
             client.request('POST',f'issue/{key}/attachments',multipart=(body,boundary),phase='attach')
 
 
+def matching_issues(client, search_payload, case_id, fingerprint, project):
+    """Fetch every page, filter exact v2/legacy labels, and select oldest open match."""
+    legacy = re.compile(r'^wbs-'+re.escape(case_id.lower())+r'-step(?:case|[1-9][0-9]*)-[a-f0-9]{12}$')
+    matches, tokens = {}, set()
+    payload = dict(search_payload)
+    while True:
+        data = client.request('POST','search/jql',payload,phase='search')
+        if not isinstance(data,dict) or not isinstance(data.get('issues'),list):
+            raise JiraError('JIRA_HTTP',phase='search')
+        for issue in data['issues']:
+            if not isinstance(issue,dict) or not isinstance(issue.get('fields'),dict):
+                raise JiraError('JIRA_HTTP',phase='search')
+            key, fields = issue.get('key',''), issue['fields']
+            labels = fields.get('labels')
+            if not isinstance(labels,list) or not all(isinstance(label,str) for label in labels):
+                raise JiraError('JIRA_HTTP',phase='search')
+            if not any(isinstance(label,str) and
+                    (label==fingerprint or legacy.fullmatch(label)) for label in labels):
+                continue
+            if not re.fullmatch(re.escape(project)+r'-[0-9]+',key):
+                raise JiraError('JIRA_HTTP',phase='search')
+            try:
+                created = datetime.fromisoformat(fields['created'].replace('Z','+00:00'))
+                if created.tzinfo is None:
+                    raise ValueError('Missing timezone')
+                created = created.timestamp()
+            except (KeyError, TypeError, ValueError):
+                raise JiraError('JIRA_HTTP',phase='search') from None
+            matches[key] = dict(key=key,created=created)
+        token = data.get('nextPageToken')
+        if data.get('isLast') is True:
+            break
+        if not token:
+            if data.get('isLast') is False:
+                raise JiraError('JIRA_HTTP',phase='search')
+            break
+        if not isinstance(token,str) or token in tokens:
+            raise JiraError('JIRA_HTTP',phase='search')
+        tokens.add(token)
+        payload = dict(search_payload,nextPageToken=token)
+    return sorted(matches.values(),key=lambda issue:(issue['created'],int(issue['key'].rsplit('-',1)[1])))
+
+
 def create_tickets(folder, approved, *, send=False, client=None):
     folder = Path(folder).resolve()
     result = dict(dry_run=not send,issues=[],errors=[])
@@ -232,25 +279,22 @@ def create_tickets(folder, approved, *, send=False, client=None):
             types = client.issue_types()
         for finding,dossier in selected:
             phase = 'prepare'
-            issue_type = 'Bug' if finding['ticket_type']=='bug' and types and 'Bug' in types else 'Task'
+            issue_type = 'Bug' if ticket_type_for(finding,dossier)=='bug' and types and 'Bug' in types else 'Task'
             if types is not None and issue_type not in types:
                 raise JiraError('JIRA_CONFIG')
             payload, fingerprint = payload_for(finding,dossier,project,issue_type,os.getenv('BUILD_URL',''),
                 os.getenv('TEST_REPORT_URL') or (os.getenv('BUILD_URL','')+'Test_20Report/' if os.getenv('BUILD_URL') else ''))
             paths = attachments_for(finding,dossier,analysis.get('questions',[]))
-            jql = f'project = "{project}" AND labels = "{fingerprint}" AND statusCategory != Done ORDER BY created ASC'
+            jql = f'project = "{project}" AND (labels = "{fingerprint}" OR labels = "{finding["case_id"]}") AND statusCategory != Done ORDER BY created ASC, key ASC'
             entry = dict(finding_id=finding['finding_id'],issue_type=issue_type,
                 type_resolution='discovered' if types is not None else 'offline Task fallback; rediscover on send',
-                create_payload=payload,search_payload=dict(jql=jql,fields=['summary'],maxResults=1),attachments=paths)
+                create_payload=payload,search_payload=dict(jql=jql,fields=['labels','created'],maxResults=100),attachments=paths)
             payloads.append(entry)
             if not send:
                 continue
             try:
                 phase = 'search'
-                existing = client.request('POST','search/jql',entry['search_payload'],phase=phase)
-                issues = existing.get('issues')
-                if not isinstance(issues,list):
-                    raise JiraError('JIRA_HTTP')
+                issues = matching_issues(client,entry['search_payload'],finding['case_id'],fingerprint,project)
                 if issues:
                     key = issues[0]['key']
                     if not re.fullmatch(re.escape(project)+r'-\d+',key):
@@ -269,6 +313,9 @@ def create_tickets(folder, approved, *, send=False, client=None):
                     action = 'created'
                 issue = dict(finding_id=finding['finding_id'],key=key,url=site+'/browse/'+key,action=action,issue_type=issue_type,
                              attachments=0)
+                issue['duplicate_keys'] = [i['key'] for i in issues[1:]]
+                if issue['duplicate_keys']:
+                    issue['warning'] = 'Multiple open matches; commented on the oldest issue.'
                 result['issues'].append(issue)  # Preserve created key even if attachment upload fails.
                 phase = 'attach'
                 attach(client,folder,key,paths)

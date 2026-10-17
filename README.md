@@ -606,7 +606,7 @@ uv run python -m test_agent jira create reports --approved F-OSM-002-1 --dry-run
 ```
 
 Jira 默认离线 dry-run，写 `jira_payloads.json`，不进行 HTTP；实际发送必须显式 `--send` 与人工批准的 finding IDs。
-发送前发现 issue types，用稳定 fingerprint 搜索未完成 ticket（新 `/search/jql` endpoint），存在则评论本次 build，避免重复创建；附相关截图。
+Python 按 cause + 引用的 FAILED check 决定候选，AI recommend_ticket 仅供参考。发送前发现 issue types，用 case ID + 引用失败 steps + Excel expected 的 v2 fingerprint 搜索未完成 ticket（`/search/jql`），兼容旧 case label；多个匹配评论最早的 issue 并记录 duplicates；附相关截图。
 Jira 404/认证问题先运行只读检查（本机 .env 需填与 Jenkins 相同账号的 email/token）：
 
 ```bash
