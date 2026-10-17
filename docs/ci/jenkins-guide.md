@@ -151,7 +151,7 @@ VISION_PROVIDER=clef 和 VISION_MODEL=cloudflare/clef 是 Jenkinsfile 中的普�
 
 ## 6. 第一次 build：阶段、日志、下载报告
 
-**做什么：** 点击 build 编号 → Console Output / Stage View，依次看 Setup → Unit tests → Test suite。
+**做什么：** 点击 build 编号 → Console Output / Stage View，依次看 Setup → Guardrail → Unit tests → Test suite（可选 Jira connection check 位于 Guardrail 后）。
 
 **为什么：** Setup 清理 workspace、checkout、安装固定 uv==0.12.17，再 uv sync --locked。Image `mcr.microsoft.com/playwright/python:v1.63.0-noble` 必须匹配 uv.lock 的 playwright==1.63.0：image 提供 Linux browsers，uv 安装 Python package。PLAYWRIGHT_BROWSERS_PATH=/ms-playwright 指向 Linux 浏览器，不能挂载 Mac 的 .browsers。
 每次都清理，故没有历史 artifacts 或 locator cache。每轮是 **Excel → GLM → 验证 → Playwright → Clef**，不带 --reuse，会产生 API 费用。
@@ -243,6 +243,56 @@ uv run python -m test_agent prune --keep 10 --yes
 按顶层目录修改时间保留最新 **10 个（四类合计）** suite-/repeat-/run-/translation- 目录，整个旧目录连同证据删除。
 默认只列出 Would delete；不会进入 symlink，不清理 cases/、calibration-*、冻结图片或 locator cache。不要使用全局 Docker prune 代替它。
 
+<a id="guardrail"></a>
+## Guardrail：测试输入先过规则，再调用 AI
+
+**为什么：** Excel 是可编辑输入。Guardrail 是纯 Python + 一个 human-owned 配置，不是 LLM；先检查整本 workbook，避免无关或恶意内容进入 Translator、浏览器、audit 或 Jira。
+Setup 后的新 **Guardrail** 阶段运行在 credentials 绑定之前；只要一项违规就 `error(...)`，阶段/build 红色 FAILURE，build description 显示首个违规。后续所有阶段跳过。
+默认 WORKBOOK 为 `cases/osm/WBS_testcase1_osm.xlsx`，Poll SCM 使用该默认值。三条原 OSM case 无需改 Excel。
+
+**配置在哪里：** 每个 workbook 同目录必须有 `guardrail.json`；缺失、无效 JSON、未知字段、错误类型或无效 app URL 均 fail closed。
+例如 OSM 配置：
+
+```json
+{
+  "allowed_apps": {"OSM Website": "https://www.openstreetmap.org/"},
+  "allowed_step_verbs": ["open", "go to", "navigate", "click", "select", "enter", "type", "fill", "press", "observe", "check", "verify", "clean up", "set", "close"],
+  "blocked_words": ["password", "api key", "apikey", "token", "secret", ".env", "credential", "email it", "send to", "ignore previous instructions", "system prompt"]
+}
+```
+
+| 检查 | 规则 |
+| --- | --- |
+| 应用 | Target Application 去前后空白、忽略大小写后，必须是 allowed_apps 的 key |
+| URL | 每个 cell 的 URL / www. 地址，host 必须与该 case 的 app URL host 完全相同；子域名或相似后缀不算匹配 |
+| 步骤 | 每条 Actions / Post action 行去编号、引号、开头标点后，必须以允许的动词/短语开头 |
+| 禁词 | 所有文字列按完整词/短语、不区分大小写匹配 blocked_words；最后一个词允许 s / es 词尾（passwords、API keys、tokens、secrets）；跨换行短语也检查 |
+| 邮箱/密钥 | 禁止邮箱地址、sk-/sk-ant-/ghp_/github_pat_/AKIA/xoxb-/xoxp- 前缀、Bearer token、private-key PEM 和 JWT 形状；不用 entropy 猜测 |
+
+额外列、notes sheet 和 header 也扫描；无归属 case 的 URL 无法证明属于允许 app，按阻断处理。规则只检查配置和文本模式，不能证明所有自然语言都安全。
+每个违规保存 case、column、step（若有）、rule、最多 80 字符的 masked snippet 和英文说明；密钥匹配只保留前 4 字符 + …，邮箱也脱敏。Console 按 case + step 合并为一行，列出全部命中规则与禁词；guardrail.json 保留每个违规的完整记录。
+词边界仍保留：tokenizer / tokenization 不视为 token，这是明确的规则选择；本规则不做通用词干还原。不要把真正的凭据放入 Excel 做演示。
+
+**如何本机检查：**
+
+```sh
+uv run python -m test_agent guardrail cases/osm/WBS_testcase1_osm.xlsx
+uv run python scripts/make_guardrail_demo.py
+uv run python -m test_agent guardrail cases/guardrail-demo/guardrail-demo.xlsx
+```
+
+`cases/<suite>/guardrail.json` 是输入规则；Artifacts 中同名的 guardrail.json 是检查结果，不能拿来覆盖配置。
+`--output-dir` 可指定独立的 standalone 报告目录，勿选 workbook 的配置目录。通过返回 0；任何 guardrail 阻断（包括 guardrail 配置/输入错误）返回 **3**，区别于测试失败 1 和其他命令的 config/input error 2。
+`translate` 和 `suite` 自动先检查所有 case，任何违规都不调用模型/浏览器，也不继续 audit/Jira；只写 guardrail.json 和 status=`BLOCKED_BY_GUARDRAIL` 的 summary.json。
+通过后 suite 中各 case 的 URL 来自 allowed_apps 对应值；`--url` 如提供，必须等于该 case 配置的完整 URL，不能作为绕过 allow-list 的方式。计划 validator 仍禁止导航到其他 URL。
+
+**如何在 Jenkins 演示：** review、push 后选 **Build with Parameters** → `WORKBOOK=cases/guardrail-demo/guardrail-demo.xlsx`，预期红色 Guardrail，其他阶段 skipped，Artifacts 有 guardrail.json。
+切回默认 WORKBOOK 才恢复正常 suite；排障不需要额外 plugin。
+
+**如何增加网站：** 人工在 allowed_apps 增加 `"Example Website": "https://example.test/"`，在 Excel 的 Target Application 使用该名称；运行独立检查。
+如合法的步骤用了新动词，人工审阅后更新 allowed_step_verbs，勿为恶意内容扩大规则。此配置控制允许输入/导航地址；新网站的 DOM 操作仍需相应 locators / vocabulary / contract 支持，Jenkins 示例目前使用 OSM locators。
+未来做 **login test**，必须有意识地从 blocked_words 移除 `password` 并审阅规则；测试凭据只能由 Jenkins Credentials 提供，**绝不能写进 Excel**。
+
 ## 7. Push Excel 触发运行
 
 **做什么：** 修改并保存 `cases/osm/WBS_testcase1_osm.xlsx`，经 review 后：
@@ -316,7 +366,7 @@ docker compose -f ci/docker-compose.yml down --volumes
 
 ## 11. Audit analysis：让 AI 解释证据
 
-**做什么：** review、commit/push 后，Pipeline 的工作部分为 Setup → Unit tests → Test suite → Audit analysis。
+**做什么：** review、commit/push 后，Pipeline 的工作部分为 Setup → Guardrail → Unit tests → Test suite → Audit analysis。
 Audit analysis 只绑定 `wbs-anthropic-api-key`，使用 `ANTHROPIC_API_KEY`，不再绑定 GLM / OPENAI_* credentials。JSON 读写需要第 3 节列出的 Pipeline Utility Steps；无需 Jira 专用 plugin。
 `AUDIT_MODEL=claude-haiku-5-5` 同时控制 analyst 与截图观察，只有一个 provider/model。旧 `AUDIT_VISION_MODEL` 暂作兼容别名，新设置优先。
 Excel 翻译与 DOM healing 仍使用原来的 GLM；生产 route checker 仍是 Clef，本次只替换 audit。
@@ -398,7 +448,7 @@ Manage Jenkins → Credentials → System → Global credentials → Add Credent
 | ID | wbs-jira |
 | Description | WBS Jira approval workflow（不填 token） |
 
-**为什么：** token 代表你的账号权限；账号需要 WBSFP 的 Browse/Create issues/Add comments/Create attachments 权限。
+**为什么：** token 代表你的账号权限；账号需要 WBSFP 的 Browse/Create issues/Edit issues/Add comments/Create attachments 权限。
 用户没有的权限，token 也不会增加。email/token 不进 Git、报告或 Console Output；Jira 发送阶段以及明确开启的只读 connection check 用 `withCredentials` 注入 `JIRA_EMAIL` / `JIRA_API_TOKEN`。
 站点 URL、project key 可以版本管理。Audit stage 没有 Jira credential，也没有写 Jira 的 tool。
 
@@ -424,7 +474,7 @@ uv run python -m test_agent jira check
 它在 Setup 后使用 `wbs-jira`，只读检查失败时标记该阶段/build UNSTABLE，并继续原测试流程；没有执行 Jira 写操作。
 参数第一次随 Jenkinsfile 加载后才会出现在 job 页面。默认不勾选时不会增加 Jira 请求。
 
-现在 `jira_results.json` 每个 error 都有 `phase` 与 `path_template`。请求阶段为 issue_types / search / create / comment / attach；连接检查另外有 auth / project。
+现在 `jira_results.json` 每个 error 都有 `phase` 与 `path_template`。请求阶段为 issue_types / search / create / comment / label / attach；连接检查另外有 auth / project。
 approval / prepare / configuration 表示请求前的本地校验，path_template 为 null。模板不包含实际 query 值、email 或 response body。
 Console 例如：`Jira 404 during issue_types (project WBSFP not found or not visible to the credential's account)`，后面列出安全的 path template。
 404 先核对 site、项目 key 和这个 credential 账号的项目可见性，不要直接认定 Jira API 路径失效。
@@ -439,6 +489,7 @@ Console 例如：`Jira 404 during issue_types (project WBSFP not found or not vi
 | search | POST search/jql |
 | create | POST issue |
 | comment | POST issue/{issue}/comment |
+| label | PUT issue/{issue}（update.labels.add；仅 legacy 匹配时） |
 | attach | POST issue/{issue}/attachments |
 
 JIRA_AUTH（401/403）查账号/token、到期和权限；JIRA_CONFIG 查配置、可用 issue types、approval hash 或 evidence；JIRA_HTTP + status 按 phase 查请求；JIRA_TIMEOUT 查网络。
@@ -490,7 +541,7 @@ partial audit 只要有一个通过规则的 ticket candidate，仍进入 Review
 **为什么：** v2 fingerprint label 只散列 case ID、Python 从引用的 FAILED rows 提取的 step numbers（排序；没有 FAILED rows 时用 BLOCKED rows）、这些 steps 的 Excel expected 原文。
 不使用 AI 的 step、ticket_type、title、explanation、source action 或 build number。AI step 为 null 且所有引用的非 case rows 只有一个 step 时，Python 填入该 step 供显示。
 使用 `POST /rest/api/3/search/jql` 分页查 WBSFP 未完成的同 v2 label issue，以及带本 case label 的旧 `wbs-<case>-step<number/case>-<hash>` issue。
-旧 label 兼容可能匹配同 case 的另一历史问题；批准前需读已有 ticket。多个 open matches 时评论最早创建的 issue，并在 jira_results.json 记录 duplicate_keys 和 warning；无匹配才新建。第二次运行也需要重新批准。
+旧 label 兼容可能匹配同 case 的另一历史问题；批准前需读已有 ticket。多个 open matches 时评论最早创建的 issue，并在 jira_results.json 记录 duplicate_keys 和 warning；无匹配才新建。仅 legacy label 匹配时，评论后用 update.labels.add 添加本次 v2 label，成功写入 added_v2_label；已有 v2 label 不重复添加。第二次运行也需要重新批准。
 无匹配才 create；同一 finding 最多附 4 张相关 step/map 图。每次类型选择、created/commented key、URL、附件数量和错误均写入 jira_results.json。
 
 **Checkpoint：** Build description 有 Jira URL；WBSFP ticket 带 wbs-test-agent、fingerprint、case ID labels，有截图和回到 Jenkins 的链接。

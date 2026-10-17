@@ -1,5 +1,5 @@
 # Task: Post Actions fix + audit agent → Jenkins approval → Jira (diagram steps 8–10)
-Status: APPROVED (round 8); dedup acceptance pending
+Status: ACCEPTED (create in #13, dedup comment in #16); NIT open: add v2 label on legacy match
 Workflow step(s): 8 (report/audit agent), 9 (human in the loop), 10 (Jira)
 Assigned: Codex · Reviewer: Claude · Brief written 2026-10-16
 
@@ -2883,3 +2883,7 @@ the oldest open match receives the comment, with `duplicate_keys` logged.
 **NIT (follow-up, non-blocking):** when a comment goes to an issue found only through a **legacy** label, also **add the v2 label** to that issue (`update.labels.add`), so later builds match exactly
 and the broad legacy fallback can eventually be removed. Record the label addition in `jira_results.json`.
 Acceptance: the next approved build → `action: commented` on **WBSFP-1** (the oldest). If WBSFP-2 is still open, `duplicate_keys` lists it; close it in Jira as a duplicate.
+
+## Final acceptance (Claude, 2026-10-17)
+Build #16 (commit `86a5b83`, UNSTABLE as designed): approved `F-OSM-002-1` → `action: commented` on **WBSFP-1**, 1 attachment, `duplicate_keys: []` (WBSFP-2 closed by the user), and the build description
+links WBSFP-1. Together with build #13 (create), **diagram steps 8–10 are accepted.** Remaining NIT: add the v2 label when commenting through a legacy match (round 8 re-review).

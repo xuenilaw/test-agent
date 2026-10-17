@@ -1,0 +1,5 @@
+{
+  "allowed_apps": {"OSM Website": "https://www.openstreetmap.org/"},
+  "allowed_step_verbs": ["open", "go to", "navigate", "click", "select", "enter", "type", "fill", "press", "observe", "check", "verify", "clean up", "set", "close"],
+  "blocked_words": ["password", "api key", "apikey", "token", "secret", ".env", "credential", "email it", "send to", "ignore previous instructions", "system prompt"]
+}

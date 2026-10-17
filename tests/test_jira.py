@@ -28,7 +28,7 @@ class FakeJiraHTTP:
         path=request.full_url
         phase=('issue_types' if 'createmeta' in path else 'search' if path.endswith('/search/jql') else
                'create' if path.endswith('/issue') else 'comment' if path.endswith('/comment') else
-               'attach' if path.endswith('/attachments') else 'auth' if path.endswith('/myself') else 'project')
+               'attach' if path.endswith('/attachments') else 'label' if request.get_method()=='PUT' else 'auth' if path.endswith('/myself') else 'project')
         if self.error and (self.error_phase is None or phase==self.error_phase):
             raise HTTPError(request.full_url,self.error,'do not expose token or response',{},io.BytesIO(b'private body'))
         path=request.full_url
@@ -189,6 +189,45 @@ class JiraTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn('statusCategory != Done',json.loads(search.data)['jql'])
             comment=next(r for r in http.calls if r.full_url.endswith('/comment'))
             self.assertIn('/job/test-agent/10/',comment.data.decode())
+
+    async def test_legacy_comment_adds_v2_label_and_retains_key_on_label_error(self):
+        for fail in [False,True]:
+            with self.subTest(fail=fail),tempfile.TemporaryDirectory() as temp:
+                reports,f=await self.prepare(Path(temp))
+                http=FakeJiraHTTP(duplicate=True,error=403 if fail else None,error_phase='label')
+                client=JiraClient('https://lawxueni.atlassian.net','WBSFP','fake','fake',opener=http)
+                result=create_tickets(reports,[f['finding_id']],send=True,client=client)
+                update=next(r for r in http.calls if r.get_method()=='PUT')
+                label=json.loads(update.data)['update']['labels'][0]['add']
+                self.assertIn('-v2-',label)
+                self.assertTrue(update.full_url.endswith('/issue/WBSFP-42'))
+                issue=result['issues'][0]
+                self.assertEqual((issue['key'],issue['action']),('WBSFP-42','commented'))
+                if fail:
+                    self.assertNotIn('added_v2_label',issue)
+                    self.assertEqual(result['errors'][0]['phase'],'label')
+                    self.assertFalse(any(r.full_url.endswith('/attachments') for r in http.calls))
+                else:
+                    self.assertFalse(result['errors'],result)
+                    self.assertEqual(issue['added_v2_label'],label)
+                    self.assertEqual(json.loads((reports/'jira_results.json').read_text())['issues'][0]['added_v2_label'],label)
+
+    async def test_exact_v2_comment_does_not_add_label_again(self):
+        with tempfile.TemporaryDirectory() as temp:
+            reports,f=await self.prepare(Path(temp))
+            d=json.loads((reports/'audit_analysis.json').read_text())['cases'][f['case_id']]
+            label=payload_for(f,d,'WBSFP','Task')[1]
+            http=FakeJiraHTTP()
+            def opener(request,timeout):
+                if request.full_url.endswith('/search/jql'):
+                    return FakeHTTP(json.dumps(dict(issues=[dict(key='WBSFP-1',fields=dict(labels=[label],created='2026-10-16T10:00:00Z'))],isLast=True)).encode())
+                return http(request,timeout)
+            client=JiraClient('https://lawxueni.atlassian.net','WBSFP','fake','fake',opener=opener)
+            result=create_tickets(reports,[f['finding_id']],send=True,client=client)
+            self.assertFalse(result['errors'],result)
+            self.assertEqual(result['issues'][0]['action'],'commented')
+            self.assertNotIn('added_v2_label',result['issues'][0])
+            self.assertFalse(any(r.get_method()=='PUT' for r in http.calls))
 
     async def test_unapproved_unknown_changed_analysis_and_safe_http_failures(self):
         with tempfile.TemporaryDirectory() as temp:

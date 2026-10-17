@@ -129,7 +129,7 @@ VALIDATED 不是测试 PASS，也不是完整语义正确的证明；尚未检�
 
 ### Validator 与 guardrail agent
 
-guardrail 是验证与阻断的机制，不一定是 agent。本阶段是确定性的 Python 验证门：
+guardrail 是验证与阻断的机制，不一定是 agent。现在 `translate` / `suite` 首先读取 Excel 旁的 `guardrail.json`，用纯 Python 检查整本 workbook；任一违规或配置缺失即退出 3，不调用模型或浏览器。计划生成后还有确定性的 Python 验证门：
 动作白名单、参数类型、来源覆盖、明确的用例约束。暂未使用 SDK guardrail decorator。
 以后可增加语义审查 agent，检测自然语言中漏掉的含义；它补充规则，不替代规则。
 
@@ -141,11 +141,13 @@ guardrail 是验证与阻断的机制，不一定是 agent。本阶段是确定�
 ```text
 src/test_agent/
   __main__.py, cli.py        # python -m test_agent 的入口
+  guardrail.py               # workflow 0：纯 Python 全 workbook 输入阻断
   readers/excel.py           # workflow 1：读取用例
   schemas/plan.py            # 纯 Pydantic 数据模型
   translation/translator.py  # workflow 1b：自然语言翻译
   translation/validator.py   # 通用验证和路线约束验证，分开维护
-cases/osm/                  # 样例 Excel、contracts.json、vocabulary.json、locators.json
+cases/osm/                  # 样例 Excel、guardrail.json、contracts.json、vocabulary.json、locators.json
+cases/guardrail-demo/       # 故意被阻断的 demo；scripts/make_guardrail_demo.py 可重新生成
 examples/                   # 保留 Day 1 Playwright 和 Agent 教学脚本
 tests/fixtures/             # 不需要网络或真实模型的回归测试
 docs/reviews/               # Codex handoff 与 Claude review
@@ -380,6 +382,20 @@ uv run python -m test_agent calibrate run cases/osm/vision_calibration_holdout -
 若 OSM 的 lazy directions 请求出错，FORM_NOT_READY 会附上已观察到的 GET 路径和 HTTP 状态
 （如 GET /directions → 503）；不额外请求，不重试。不知道状态时不会猜测。
 
+## Step 0：输入 Guardrail（无 AI）
+
+```sh
+uv run python -m test_agent guardrail cases/osm/WBS_testcase1_osm.xlsx
+uv run python scripts/make_guardrail_demo.py
+uv run python -m test_agent guardrail cases/guardrail-demo/guardrail-demo.xlsx
+```
+
+正常 workbook 退出 0；demo 退出 3，并保存 masked guardrail.json 和 status=BLOCKED_BY_GUARDRAIL 的 summary.json。
+`translate` / `suite` 也会先检查所有 case（包括没选中的 case）；guardrail.json 缺失/无效也 fail closed。
+应用 URL 来自配置的 allowed_apps；`--url` 仅可重复该 case 的配置 URL，不能绕过 allow-list。
+Jenkins 的 WORKBOOK 参数选择 workbook，Setup 后立即运行 Guardrail，阻断时显示红色 FAILURE，之后的测试、AI、审批与 Jira 阶段跳过。
+配置与新网站操作见 [Jenkins guide：Guardrail](docs/ci/jenkins-guide.md#guardrail)。
+
 ## 多用例 suite（Part A）
 
 ```bash
@@ -606,7 +622,7 @@ uv run python -m test_agent jira create reports --approved F-OSM-002-1 --dry-run
 ```
 
 Jira 默认离线 dry-run，写 `jira_payloads.json`，不进行 HTTP；实际发送必须显式 `--send` 与人工批准的 finding IDs。
-Python 按 cause + 引用的 FAILED check 决定候选，AI recommend_ticket 仅供参考。发送前发现 issue types，用 case ID + 引用失败 steps + Excel expected 的 v2 fingerprint 搜索未完成 ticket（`/search/jql`），兼容旧 case label；多个匹配评论最早的 issue 并记录 duplicates；附相关截图。
+Python 按 cause + 引用的 FAILED check 决定候选，AI recommend_ticket 仅供参考。发送前发现 issue types，用 case ID + 引用失败 steps + Excel expected 的 v2 fingerprint 搜索未完成 ticket（`/search/jql`），兼容旧 case label；多个匹配评论最早的 issue 并记录 duplicates；旧 label 匹配成功后添加 v2 label 并记录 added_v2_label；附相关截图。
 Jira 404/认证问题先运行只读检查（本机 .env 需填与 Jenkins 相同账号的 email/token）：
 
 ```bash

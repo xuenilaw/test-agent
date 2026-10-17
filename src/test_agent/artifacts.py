@@ -10,7 +10,7 @@ from test_agent.junit import build_junit
 from test_agent.reporting import build_report, read_json
 
 DOWNLOADS = ('report.html', 'audit.csv', 'junit.xml', 'summary.json', 'evidence.zip')
-EXTRA_DOWNLOADS = ('audit_analysis.json','audit_analysis.md','audit_review.json',
+EXTRA_DOWNLOADS = ('guardrail.json','audit_analysis.json','audit_analysis.md','audit_review.json',
                    'jira_decision.json','jira_payloads.json','jira_results.json')
 
 

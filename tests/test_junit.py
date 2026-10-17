@@ -151,7 +151,7 @@ class LayoutTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(summary['status'], 'PASSED', summary)
                 self.assertEqual(Path(summary['cases'][0]['translation_folder']), output/'cases/OSM-003/translation')
                 self.assertTrue((output/'cases/OSM-003/run/results.json').exists())
-                self.assertEqual({p.name for p in output.iterdir()}, {'cases','summary.json','report.html','audit.csv','junit.xml'})
+                self.assertEqual({p.name for p in output.iterdir()}, {'cases','summary.json','guardrail.json','report.html','audit.csv','junit.xml'})
                 model.assert_awaited_once()
                 reused = await run_suite(ROOT/'cases/osm/WBS_testcase1_osm.xlsx', ROOT/'cases/osm/locators.json',
                                          ROOT, output_root=artifacts, reuse=True)

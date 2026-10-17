@@ -11,6 +11,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import ValidationError
 
+from test_agent.guardrail import check_workbook, save_check, print_check
 from test_agent.readers.excel import read_case
 from test_agent.schemas.contracts import parse_contract
 from test_agent.schemas.plan import TranslationPlan
@@ -57,15 +58,25 @@ async def run_translation(args: argparse.Namespace, *, report_sink=None, quiet=F
     project_root = args.project_dir.resolve()
     output_root = args.output_dir or project_root / "artifacts"
     run_id = "translation-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    output = getattr(args, 'output_folder', None) or output_root.resolve() / run_id / "cases" / args.case
+    guard = check_workbook(args.workbook,url=args.url,case_id=args.case)
+    # A blocked case ID may itself be a secret. Keep blocked artifacts at the run root.
+    output = (output_root.resolve()/run_id if guard['status']=='BLOCKED' else
+              getattr(args, 'output_folder', None) or output_root.resolve()/run_id/'cases'/args.case)
     output.mkdir(parents=True)
     report = {"status": "REJECTED", "browser_executed": False, "contract_applied": False,
               "vocabulary_applied": False,
               "validation_scope": "schema, source coverage, and explicit case constraints; not full semantic equivalence",
               "errors": [], "output_directory": str(output)}
+    save_check(guard,output)
+    if guard['status']=='BLOCKED':
+        print_check(guard)
+        if report_sink is not None:
+            report_sink.update(status='BLOCKED_BY_GUARDRAIL',errors=['Guardrail blocked'],output_directory=str(output))
+        return 3
     schema_stage = "Contract schema"
     try:
         case = read_case(args.workbook, args.case)
+        args.url = guard["application_urls"][args.case]
         contracts_path = args.contracts or args.workbook.parent / "contracts.json"
         # An absent default sidecar means no contract. An explicit path must exist.
         contracts = (json.loads(contracts_path.read_text(encoding="utf-8"))
@@ -131,6 +142,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--project-dir", type=Path, default=Path.cwd(),
                         help="Directory containing .env, cases/ and artifacts/ (default: current directory)")
     commands = parser.add_subparsers(dest="command", required=True)
+    guard_parser = commands.add_parser('guardrail',help='Offline whole-workbook input guardrail; blocked exits 3')
+    guard_parser.add_argument('workbook',type=Path)
+    guard_parser.add_argument('--output-dir',type=Path)
+    guard_parser.add_argument('--url')
     commands.add_parser('clef-smoke',help='One text-only OpenRouter Decisions request (no images)')
     analyst_parser = commands.add_parser('audit-agent',help='Read-only Claude Haiku audit with guarded screenshot questions')
     analyst_parser.add_argument('folder',type=Path)
@@ -170,13 +185,14 @@ def main(argv: list[str] | None = None) -> int:
     translate_parser.add_argument("--contracts", type=Path, help="Default: contracts.json beside the workbook (optional)")
     translate_parser.add_argument("--vocabulary", type=Path, help="Default: vocabulary.json beside the workbook (optional)")
     translate_parser.add_argument("--output-dir", type=Path, help="Default: <project-dir>/artifacts")
-    translate_parser.add_argument("--url", default="https://www.openstreetmap.org/")
+    translate_parser.add_argument("--url", help="Must equal the case app URL in guardrail.json")
     revalidate_parser = commands.add_parser("revalidate", help="Revalidate an unchanged translated case against current requirements, without LLM")
     revalidate_parser.add_argument("folder", type=Path)
     revalidate_parser.add_argument("--output-dir", type=Path)
     suite_parser = commands.add_parser("suite", help="Translate and execute all workbook cases in order")
     suite_parser.add_argument("workbook", type=Path)
     suite_parser.add_argument("--locators", type=Path, required=True)
+    suite_parser.add_argument("--url", help="Must equal each case app URL in guardrail.json")
     suite_parser.add_argument("--reuse", action="store_true")
     suite_parser.add_argument("--fault", action="append", default=[])
     suite_parser.add_argument("--skip-vision", action="store_true")
@@ -207,6 +223,13 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument("--output-dir", type=Path)
     run_parser.add_argument("--skip-vision", action="store_true", help="Skip declared vision checks as BLOCKED for offline/dev runs")
     args = parser.parse_args(argv)
+    if args.command=='guardrail':
+        result = check_workbook(args.workbook,url=args.url)
+        output = args.output_dir or args.project_dir/'artifacts'/('guardrail-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ'))
+        save_check(result,output)
+        print_check(result)
+        print('Saved:',output.resolve())
+        return 3 if result['status']=='BLOCKED' else 0
     if args.command == 'audit-agent':
         from test_agent.audit_agent import run_audit_agent, approval_preview
         from test_agent.reporting import build_report
@@ -272,7 +295,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == 'clef-smoke':
         from test_agent.verification.clef import smoke
         return asyncio.run(smoke(args.project_dir.resolve()))
-    if args.command in {'run','suite'}:
+    if args.command == 'run':
         from test_agent.faults import validate_fault_names
         try:
             validate_fault_names(args.fault)
@@ -283,10 +306,12 @@ def main(argv: list[str] | None = None) -> int:
         from test_agent.suite import run_suite, print_summary
         try:
             summary = asyncio.run(run_suite(args.workbook, args.locators, args.project_dir.resolve(), reuse=args.reuse,
-                skip_vision=args.skip_vision, headed=args.headed, output_root=args.output_dir, faults=args.fault))
+                skip_vision=args.skip_vision, headed=args.headed, output_root=args.output_dir, faults=args.fault,url=args.url))
         except ValueError as exc:
             print(str(exc))
             return 2
+        if summary['status']=='BLOCKED_BY_GUARDRAIL':
+            return 3
         print_summary(summary)
         return 0 if summary["status"] == "PASSED" else 1
     if args.command == "revalidate":

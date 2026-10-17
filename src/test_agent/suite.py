@@ -6,6 +6,7 @@ import shutil
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from test_agent.guardrail import check_workbook, save_check, print_check
 from test_agent.readers.excel import read_case_ids
 from test_agent.plan_loader import load_plan
 from test_agent.runner import run_case
@@ -35,14 +36,19 @@ def reusable_plan(root: Path, workbook: Path, case_id: str, url: str):
 
 
 async def run_suite(workbook: Path, locators: Path, project_root: Path, *, reuse=False,
-                    skip_vision=False, headed=False, output_root=None, url='https://www.openstreetmap.org/', faults=None,require_reuse=False,plan_root=None,output_folder=None):
+                    skip_vision=False, headed=False, output_root=None, url=None, faults=None,require_reuse=False,plan_root=None,output_folder=None):
     from test_agent.cli import run_translation
     faults = list(dict.fromkeys(faults or []))
-    validate_fault_names(faults)
     start=time.perf_counter()
     stamp=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
     artifact_root=output_root or project_root/'artifacts'
     output=output_folder or artifact_root/('suite-'+stamp); output.mkdir(parents=True)
+    guard = check_workbook(workbook,url=url)
+    blocked = save_check(guard,output)
+    if blocked:
+        print_check(guard)
+        return blocked
+    validate_fault_names(faults)
     from dotenv import load_dotenv
     load_dotenv(project_root/'.env')
     summary=dict(workbook=str(workbook.resolve()),output_directory=str(output.resolve()),cases=[],status='BLOCKED',reason=None,faults_injected=faults,
@@ -75,6 +81,7 @@ async def run_suite(workbook: Path, locators: Path, project_root: Path, *, reuse
             raise ValueError('Contracts must be an object')
         prepared=[]
         for case_id in case_ids:
+            case_url=guard['application_urls'][case_id]
             case_start=time.perf_counter()
             entry=dict(case_id=case_id,status='BLOCKED',reason=None,translation_folder=None,run_folder=None,
                        translation_seconds=0,execution_seconds=0,reused=False,heals=0,faults_injected=[],designed_outcome=None,outcome_as_designed=None)
@@ -82,7 +89,7 @@ async def run_suite(workbook: Path, locators: Path, project_root: Path, *, reuse
             try:
                 contract=parse_contract(contracts[case_id]).model_dump() if case_id in contracts else None
                 entry['designed_outcome']=(contract or {}).get('designed_outcome')
-                folder=reusable_plan(plan_root or artifact_root,workbook,case_id,url) if reuse else None
+                folder=reusable_plan(plan_root or artifact_root,workbook,case_id,case_url) if reuse else None
                 entry['reused']=folder is not None
                 translation_output=output/'cases'/case_id/'translation'
                 if folder is not None:
@@ -94,7 +101,7 @@ async def run_suite(workbook: Path, locators: Path, project_root: Path, *, reuse
                     print(f'{case_id}: translating...',flush=True)
                     report={}; started=time.perf_counter()
                     args=argparse.Namespace(project_dir=project_root,workbook=workbook,case=case_id,
-                        contracts=None,vocabulary=None,output_dir=output,url=url,output_folder=translation_output)
+                        contracts=None,vocabulary=None,output_dir=output,url=case_url,output_folder=translation_output)
                     await run_translation(args,report_sink=report,quiet=True)
                     entry['translation_seconds']=round(time.perf_counter()-started,3)
                     folder=Path(report['output_directory'])

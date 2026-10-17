@@ -11,6 +11,8 @@ pipeline {
     }
     triggers { pollSCM('H/5 * * * *') }
     parameters {
+        string(name: 'WORKBOOK', defaultValue: 'cases/osm/WBS_testcase1_osm.xlsx',
+            description: 'Workbook path; its adjacent guardrail.json is required.')
         booleanParam(name: 'CHECK_JIRA_CONNECTION', defaultValue: false,
             description: 'Run read-only Jira authentication, project and issue-type checks.')
     }
@@ -46,6 +48,25 @@ pipeline {
                         '''
                     }
                 }
+                stage('Guardrail') {
+                    steps {
+                        script {
+                            withEnv(["WORKBOOK_PATH=${params.WORKBOOK}"]) {
+                                def code = sh(returnStatus: true, script: '''
+                                    set +x
+                                    uv run python -m test_agent guardrail "$WORKBOOK_PATH" --output-dir reports
+                                ''')
+                                if (code != 0) {
+                                    def guard = readJSON(file: 'reports/guardrail.json', returnPojo: true)
+                                    def first = guard.violations[0]
+                                    currentBuild.description = "Blocked by guardrail: ${first.case} ${first.rule}: ${first.message}"
+                                    error('Blocked by guardrail: inspect guardrail.json. Nothing was executed.')
+                                }
+                            }
+                        }
+                    }
+                    post { always { archiveArtifacts artifacts: 'reports/guardrail.json', allowEmptyArchive: true } }
+                }
                 stage('Jira connection check') {
                     when { expression { params.CHECK_JIRA_CONNECTION } }
                     steps {
@@ -69,10 +90,14 @@ pipeline {
                             string(credentialsId: 'wbs-anthropic-api-key', variable: 'ANTHROPIC_API_KEY')
                         ]) {
                             script {
-                                def code = sh(returnStatus: true, script: '''
-                                    set +x
-                                    uv run python -m test_agent suite cases/osm/WBS_testcase1_osm.xlsx --locators cases/osm/locators.json
-                                ''')
+                                def code
+                                withEnv(["WORKBOOK_PATH=${params.WORKBOOK}"]) {
+                                    code = sh(returnStatus: true, script: '''
+                                        set +x
+                                        uv run python -m test_agent suite "$WORKBOOK_PATH" --locators cases/osm/locators.json
+                                    ''')
+                                }
+                                if (code == 3) { error('Blocked by guardrail during suite preflight; nothing was executed.') }
                                 def result = sh(returnStdout: true, script: "python ci/suite_result.py ${code}").trim()
                                 sh 'uv run python ci/prepare_reports.py'
                                 if (result == 'UNSTABLE') {

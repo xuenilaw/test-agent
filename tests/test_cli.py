@@ -102,6 +102,7 @@ class PackageCliTests(unittest.TestCase):
         suite.mkdir()
         workbook = suite / "cases.xlsx"
         shutil.copyfile(ROOT / "cases/osm/WBS_testcase1_osm.xlsx", workbook)
+        shutil.copyfile(ROOT / "cases/osm/guardrail.json", suite / "guardrail.json")
         return workbook
 
     def test_absent_sidecar_does_not_apply_osm_project_contract(self):

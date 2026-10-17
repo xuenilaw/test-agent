@@ -103,8 +103,9 @@ class FaultInputTests(unittest.IsolatedAsyncioTestCase):
 
     def test_unknown_fault_exit_two_before_browser(self):
         for command in ['run','suite']:
-            with patch('test_agent.runner.async_playwright') as browser,contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(main([command,'unused','--locators','unused','--fault','unknown']),2)
+            workbook = str(ROOT/'cases/osm/WBS_testcase1_osm.xlsx') if command=='suite' else 'unused'
+            with tempfile.TemporaryDirectory() as temp,patch('test_agent.runner.async_playwright') as browser,contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main([command,workbook,'--locators','unused','--fault','unknown','--output-dir',temp]),2)
             browser.assert_not_called()
 
     def test_check_only_or_undeclared_target_rejected(self):

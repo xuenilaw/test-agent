@@ -19,7 +19,7 @@ from test_agent.schemas.audit_analysis import Finding
 
 PATH_TEMPLATES = dict(auth='myself', project='project/{project}',
     issue_types='issue/createmeta/{project}/issuetypes', search='search/jql', create='issue',
-    comment='issue/{issue}/comment', attach='issue/{issue}/attachments')
+    comment='issue/{issue}/comment', label='issue/{issue}', attach='issue/{issue}/attachments')
 
 
 class JiraError(ValueError):
@@ -240,7 +240,7 @@ def matching_issues(client, search_payload, case_id, fingerprint, project):
                 created = created.timestamp()
             except (KeyError, TypeError, ValueError):
                 raise JiraError('JIRA_HTTP',phase='search') from None
-            matches[key] = dict(key=key,created=created)
+            matches[key] = dict(key=key,created=created,legacy_only=fingerprint not in labels)
         token = data.get('nextPageToken')
         if data.get('isLast') is True:
             break
@@ -317,6 +317,10 @@ def create_tickets(folder, approved, *, send=False, client=None):
                 if issue['duplicate_keys']:
                     issue['warning'] = 'Multiple open matches; commented on the oldest issue.'
                 result['issues'].append(issue)  # Preserve created key even if attachment upload fails.
+                if action=='commented' and issues[0]['legacy_only']:
+                    phase = 'label'
+                    client.request('PUT',f'issue/{key}',{'update':{'labels':[{'add':fingerprint}]}},phase=phase)
+                    issue['added_v2_label'] = fingerprint
                 phase = 'attach'
                 attach(client,folder,key,paths)
                 issue['attachments'] = len(paths)
