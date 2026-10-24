@@ -3,6 +3,8 @@
 Turn test cases written in Excel into browser tests, save the evidence, and review the results in Jenkins.
 The sample suite tests routes and map layers on [OpenStreetMap](https://www.openstreetmap.org/).
 
+![Demo: Excel test case → Playwright run on OpenStreetMap → evidence report → Jenkins approval → Jira issue](docs/assets/demo.gif)
+
 ## How it works
 
 1. **Check the input.** Python guardrail rules scan the whole workbook. A violation stops the run before any AI or browser calls.
@@ -178,7 +180,7 @@ For authentication or project-access problems, run `uv run python -m test_agent 
 
 ## Run in Jenkins
 
-Follow the [Jenkins setup and troubleshooting guide (Chinese)](docs/ci/jenkins-guide.md) for Docker, plugins, credentials and job configuration.
+Follow the [Jenkins setup and troubleshooting guide](docs/ci/jenkins-guide.md) ([中文](docs/ci/jenkins-guide.zh-CN.md)) for Docker, plugins, credentials and job configuration.
 
 The main stages are **Setup → Guardrail → Unit tests → Test suite → Audit analysis → Review tickets → Record decision and Jira**.
 An optional Jira connection check runs after Guardrail when `CHECK_JIRA_CONNECTION` is selected; use it for troubleshooting.
@@ -230,7 +232,3 @@ General preconditions are retained as text rather than automatically executed.
 
 - [Source code](src/test_agent/): start with `guardrail.py`, `cli.py`, `suite.py` and `runner.py`.
 - [Early learning examples](examples/): the original Playwright and agent exercises.
-- [Vision calibration and provider comparison](docs/reviews/2026-10-15-day6-report.md).
-- [Audit and Jira design/reviews](docs/reviews/2026-10-16-audit-jira.md).
-- [Guardrail design/reviews](docs/reviews/2026-10-17-guardrail.md).
-- [Collaboration process](docs/collaboration.md): implementation, review and approval before committing.
