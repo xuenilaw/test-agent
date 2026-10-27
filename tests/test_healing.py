@@ -69,6 +69,14 @@ class HealingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(later.metadata_for('layers control'), dict(healed=False, locator_source='cache'))
         self.assertEqual(len(planner.calls), 1)
 
+    async def test_markdown_fenced_proposal_is_unwrapped(self):
+        class FencedPlanner(FakePlanner):
+            async def propose(self, target, description, snapshot):
+                return '```json\n' + await super().propose(target, description, snapshot) + '\n```'
+        resolver = self.resolver(FencedPlanner())
+        await perform(self.page, resolver, AtomicAction(action='click', target='layers control'))
+        self.assertEqual(resolver.metadata_for('layers control'), dict(healed=True, locator_source='healed'))
+
     async def test_ambiguous_proposal_blocks_once_and_remaining_steps_not_run(self):
         await self.page.set_content('<a href="#">Layers</a><a href="#">Layers</a>')
         planner = FakePlanner()

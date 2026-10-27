@@ -5,6 +5,7 @@ import os
 import tempfile
 from datetime import datetime, timezone
 
+from test_agent.model_output import unwrap_json_fence
 from test_agent.planning.locator import LocatorProposal, SNAPSHOT_LIMIT
 from test_agent.tools.dom import Blocked, LocatorSpec, Resolver
 
@@ -110,7 +111,7 @@ class HealingResolver(Resolver):
                 raw = await self.planner.propose(target, self.targets[target], snapshot)
                 event['model'] = self.planner.model_name
                 event['proposal'] = raw[:8000] if isinstance(raw, str) else raw
-                proposal = LocatorProposal.model_validate_json(raw) if isinstance(raw, str) else LocatorProposal.model_validate(raw)
+                proposal = LocatorProposal.model_validate_json(unwrap_json_fence(raw)) if isinstance(raw, str) else LocatorProposal.model_validate(raw)
                 event['proposal'] = proposal.model_dump()
                 spec = LocatorSpec.model_validate(proposal.locator.model_dump())
                 loc = self.build_locator(page, spec).filter(visible=True)

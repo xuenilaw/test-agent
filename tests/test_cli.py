@@ -25,7 +25,7 @@ class PackageCliTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.output = Path(self.temp.name)
 
-    def run_cli(self, plan, case="OSM-001", workbook=None, contracts=None, vocabulary=None):
+    def run_cli(self, plan, case="OSM-001", workbook=None, contracts=None, vocabulary=None, raw=None):
         args = ["--project-dir", str(ROOT), "translate",
                 str(workbook or ROOT / "cases/osm/WBS_testcase1_osm.xlsx"),
                 "--output-dir", str(self.output), "--case", case]
@@ -33,7 +33,7 @@ class PackageCliTests(unittest.TestCase):
             args.extend(["--contracts", str(contracts)])
         if vocabulary is not None:
             args.extend(["--vocabulary", str(vocabulary)])
-        with patch("test_agent.cli.translate", new=AsyncMock(return_value=json.dumps(plan))) as model, \
+        with patch("test_agent.cli.translate", new=AsyncMock(return_value=raw if raw is not None else json.dumps(plan))) as model, \
                 patch("test_agent.cli.load_dotenv"), \
                 patch.dict(os.environ, {"OPENAI_API_KEY": "fake-test-key", "OPENAI_MODEL": "fake-model"}), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -69,6 +69,21 @@ class PackageCliTests(unittest.TestCase):
         self.assertEqual(saved_case, self.fixture["case"])
         for name in ("model-output.txt", "candidate-plan.json"):
             self.assertTrue((folder / name).exists())
+
+    def test_markdown_fenced_plan_is_unwrapped_and_raw_output_kept(self):
+        raw = "```json\n" + json.dumps(self.fixture["plan"], indent=2) + "\n```\n"
+        result, _ = self.run_cli(self.fixture["plan"], raw=raw)
+        self.assertEqual(result, 0)
+        folder = next(self.output.glob("translation-*/cases/OSM-001"))
+        self.assertEqual(json.loads((folder / "plan.json").read_text()), self.fixture["plan"])
+        self.assertEqual((folder / "model-output.txt").read_text(), raw)
+
+    def test_prose_around_plan_is_still_rejected(self):
+        raw = "Here is the plan:\n```json\n" + json.dumps(self.fixture["plan"]) + "\n```"
+        result, _ = self.run_cli(self.fixture["plan"], raw=raw)
+        self.assertEqual(result, 1)
+        folder = next(self.output.glob("translation-*/cases/OSM-001"))
+        self.assertFalse((folder / "plan.json").exists())
 
     def test_invalid_plan_saves_rejection_without_approved_plan(self):
         plan = copy.deepcopy(self.fixture["plan"])

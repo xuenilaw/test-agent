@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from pydantic import ValidationError
 
 from test_agent.guardrail import check_workbook, save_check, print_check
+from test_agent.model_output import unwrap_json_fence
 from test_agent.readers.excel import read_case
 from test_agent.schemas.contracts import parse_contract
 from test_agent.schemas.plan import TranslationPlan
@@ -104,7 +105,7 @@ async def run_translation(args: argparse.Namespace, *, report_sink=None, quiet=F
                               base_url=os.getenv("OPENAI_BASE_URL") or None, vocabulary=vocabulary)
         (output / "model-output.txt").write_text(raw, encoding="utf-8")
         schema_stage = "Plan schema"
-        plan = TranslationPlan.model_validate_json(raw)
+        plan = TranslationPlan.model_validate_json(unwrap_json_fence(raw))
         report["errors"] = validate_plan(plan, case, args.url, contract,
                                          set(vocabulary["targets"]) if vocabulary is not None else None)
         report["contract_applied"] = contract is not None
