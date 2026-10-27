@@ -3,7 +3,12 @@
 Turn test cases written in Excel into browser tests, save the evidence, and review the results in Jenkins.
 The sample suite tests routes and map layers on [OpenStreetMap](https://www.openstreetmap.org/).
 
-![Demo: Excel test case → Playwright run on OpenStreetMap → evidence report → Jenkins approval → Jira issue](docs/assets/demo.gif)
+Many teams still keep manual test cases in Excel, written in plain language. AI can turn them into automated tests, but an AI should not grade its own work.
+Here AI translates and explains, while deterministic Python and Playwright checks decide each verdict, and a human approves every Jira ticket.
+
+![Demo: Excel test cases → Playwright run on OpenStreetMap → AI audit finding → Jenkins approval](docs/assets/demo.gif)
+
+<sub>Frames from separate runs of the sample suite.</sub>
 
 ## How it works
 
@@ -16,6 +21,18 @@ The sample suite tests routes and map layers on [OpenStreetMap](https://www.open
 
 Python controls execution and validation. AI provides translation, limited locator repair, image observations and suggested explanations.
 AI analysis never changes the original test verdict or relaxes an expected result.
+
+## Example: what the audit caught
+
+OSM-002 asks for the driving time from Hamburg to Munich and expects it to be **under 3 hours**.
+Playwright measured **7:36 for a 776 km route**, so the check correctly reports **FAILED**.
+The limit was set this way on purpose, to see whether the audit would notice.
+
+The AI audit then read the saved evidence and concluded that the *test case* is wrong, not the website:
+a 776 km drive in under 3 hours would need an average of about 259 km/h.
+It classified the failure as a **test-case problem (high confidence)** rather than a software bug, and suggested fixing the expected value.
+
+The FAILED verdict and the threshold stayed unchanged. The suggestion became a Jira *task* candidate that waits for a human to approve it in Jenkins.
 
 ## Quick start
 
@@ -232,3 +249,7 @@ General preconditions are retained as text rather than automatically executed.
 
 - [Source code](src/test_agent/): start with `guardrail.py`, `cli.py`, `suite.py` and `runner.py`.
 - [Early learning examples](examples/): the original Playwright and agent exercises.
+
+## How this was built
+
+Implementation was AI-assisted: one AI agent (Codex) wrote the code and a second (Claude) reviewed.
